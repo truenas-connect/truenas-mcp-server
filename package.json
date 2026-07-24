@@ -1,0 +1,75 @@
+{
+  "name": "@truenas/mcp-server",
+  "version": "0.0.0",
+  "description": "Standalone TrueNAS MCP server: stdio adapter over @truenas/mcp-base for self-hosted use with any MCP client",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "bin": {
+    "truenas-mcp-server": "./dist/cli.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "prepack": "yarn build",
+    "prepare": "tsup",
+    "dev": "tsup --watch",
+    "start": "tsx src/cli.ts",
+    "init": "tsx src/cli.ts init",
+    "inspect": "npx @modelcontextprotocol/inspector tsx src/cli.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.spec.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "lint": "eslint .",
+    "clean": "rm -rf dist"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@truenas/api-client": "^1.0.2",
+    "@truenas/mcp-base": "git+https://github.com/truenas-connect/truenas-mcp-base.git#prototype",
+    "rxjs": "~7.8.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.0.0",
+    "@vitest/coverage-v8": "^3.0.0",
+    "eslint": "^9.18.0",
+    "tsup": "^8.3.5",
+    "tsx": "^4.19.0",
+    "typescript": "~5.9.3",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "yarn@4.10.3",
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/truenas-connect/truenas-mcp-server.git"
+  },
+  "keywords": [
+    "truenas",
+    "mcp",
+    "model-context-protocol"
+  ]
+}
