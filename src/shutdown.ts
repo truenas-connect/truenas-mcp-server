@@ -21,10 +21,16 @@ export function createShutdown(deps: ShutdownDeps): () => void {
     }
     started = true;
     void (async () => {
+      let timer: NodeJS.Timeout | undefined;
       await Promise.race([
         deps.flush().catch(() => undefined),
-        new Promise((resolve) => setTimeout(resolve, deps.drainTimeoutMs ?? 2000)),
+        new Promise((resolve) => {
+          timer = setTimeout(resolve, deps.drainTimeoutMs ?? 2000);
+        }),
       ]);
+      // Self-contained even with a non-exiting injected exit (tests): a
+      // dangling timer would keep the event loop alive.
+      clearTimeout(timer);
       try {
         deps.close();
       } catch {
