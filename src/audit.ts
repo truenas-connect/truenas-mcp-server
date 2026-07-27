@@ -35,10 +35,18 @@ export function jsonlAuditSink(path: string): FlushableAuditSink {
     await appendFile(path, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
     if (!modeEnsured) {
       // The creation mode does not apply to a pre-existing file — tighten it
-      // once, best-effort, after the file is guaranteed to exist.
+      // once after the file is guaranteed to exist. A failure must not block
+      // auditing, but it must not be silent either: the file carries tool
+      // arguments (mirrors config.ts's warnIfBroadlyReadable).
       modeEnsured = true;
       if (process.platform !== 'win32') {
-        await chmod(path, 0o600).catch(() => undefined);
+        await chmod(path, 0o600).catch((error: unknown) => {
+          console.error(
+            `Warning: could not restrict ${path} to mode 600 ` +
+              `(${error instanceof Error ? error.message : String(error)}) — ` +
+              'the audit log may be readable by other users',
+          );
+        });
       }
     }
   };

@@ -142,6 +142,9 @@ Note that stdio MCP servers are one-process-per-client: the Inspector cannot
 attach to the instance Claude Desktop spawned — the trace file is the way to
 watch that conversation.
 
+Startup failures print a curated message; set `TRUENAS_MCP_DEBUG=1` to get
+full stack traces.
+
 ## Development
 
 ```bash

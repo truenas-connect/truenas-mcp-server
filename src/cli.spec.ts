@@ -21,12 +21,14 @@ interface CliResult {
   stderr: string;
 }
 
-function cli(args: string[], stdin = ''): Promise<CliResult> {
+function cli(args: string[], extraEnv: Record<string, string> = {}): Promise<CliResult> {
   return new Promise((resolve, reject) => {
-    // Ambient config/trace env vars must not leak into the assertions.
+    // Ambient config/trace/debug env vars must not leak into the assertions.
     const env = { ...process.env };
     delete env['TRUENAS_MCP_CONFIG'];
     delete env['TRUENAS_MCP_TRACE'];
+    delete env['TRUENAS_MCP_DEBUG'];
+    Object.assign(env, extraEnv);
     const child = spawn(tsxBin, [cliPath, ...args], { env });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
@@ -40,7 +42,7 @@ function cli(args: string[], stdin = ''): Promise<CliResult> {
         stderr: Buffer.concat(err).toString(),
       }),
     );
-    child.stdin.end(stdin);
+    child.stdin.end('');
   });
 }
 
@@ -88,6 +90,15 @@ describe('cli', () => {
     expect(code).toBe(1);
     expect(stderr).toContain("'--bogus'");
     expect(stderr).not.toMatch(/^\s+at /m);
+  }, 30_000);
+
+  it('TRUENAS_MCP_DEBUG forces the stack even for expected failures', async () => {
+    const { code, stderr } = await cli(['--config', join(dir, 'nope.json')], {
+      TRUENAS_MCP_DEBUG: '1',
+    });
+    expect(code).toBe(1);
+    expect(stderr).toContain('Config file not found');
+    expect(stderr).toMatch(/^\s+at /m);
   }, 30_000);
 
   it('routes init and exits non-zero when stdin ends early', async () => {

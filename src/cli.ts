@@ -163,15 +163,24 @@ main().catch((error: unknown) => {
   // Printed verbatim on the assumption that core/api-client errors never
   // embed credentials (keys live only in the config file).
   //
-  // Expected startup failures (bad config, unreachable system, CLI misuse)
-  // are plain Errors with curated messages, or parseArgs errors; anything
-  // else is a bug and gets its stack for diagnosability.
+  // Expected failures — ours today, and any future core subclasses
+  // (ConfigError, AuthError, ...) — are Error-derived with curated messages
+  // and print message-only. Bugs are overwhelmingly native error types
+  // (TypeError & co.) or messageless, and get their stack. parseArgs signals
+  // CLI misuse via TypeErrors with ERR_PARSE_ARGS codes — user error, not a
+  // bug. TRUENAS_MCP_DEBUG forces the stack for everything.
   if (error instanceof Error) {
     const code = (error as NodeJS.ErrnoException).code;
-    const expected =
-      (error.constructor === Error && error.message.length > 0) ||
-      (typeof code === 'string' && code.startsWith('ERR_PARSE_ARGS'));
-    console.error(expected ? error.message : (error.stack ?? error.message));
+    const parseArgsError = typeof code === 'string' && code.startsWith('ERR_PARSE_ARGS');
+    const bugLike =
+      !parseArgsError &&
+      (error.message.length === 0 ||
+        error instanceof TypeError ||
+        error instanceof RangeError ||
+        error instanceof ReferenceError ||
+        error instanceof SyntaxError);
+    const showStack = bugLike || process.env['TRUENAS_MCP_DEBUG'] !== undefined;
+    console.error(showStack ? (error.stack ?? error.message) : error.message);
   } else {
     console.error(String(error));
   }
