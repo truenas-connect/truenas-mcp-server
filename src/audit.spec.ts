@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { type AuditEvent } from '@truenas/mcp-base';
@@ -38,6 +38,14 @@ describe('jsonlAuditSink', () => {
       'second',
     ]);
     // Events carry tool arguments — same hygiene as the config file.
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
+  it('tightens permissions on a pre-existing file', async () => {
+    const path = join(dir, 'audit.jsonl');
+    writeFileSync(path, 'old\n', { mode: 0o644 });
+    const sink = jsonlAuditSink(path);
+    await sink.record(event('x'));
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 

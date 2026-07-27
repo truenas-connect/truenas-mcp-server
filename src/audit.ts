@@ -1,4 +1,4 @@
-import { appendFile, mkdir } from 'node:fs/promises';
+import { appendFile, chmod, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { type AuditEvent, type AuditSink } from '@truenas/mcp-base';
 import type { ServerConfig } from '@/config';
@@ -20,6 +20,7 @@ export interface FlushableAuditSink extends AuditSink {
 export function jsonlAuditSink(path: string): FlushableAuditSink {
   let dirReady: Promise<unknown> | undefined;
   let tail: Promise<unknown> = Promise.resolve();
+  let modeEnsured = false;
 
   const append = async (event: AuditEvent): Promise<void> => {
     dirReady ??= mkdir(dirname(path), { recursive: true });
@@ -31,8 +32,15 @@ export function jsonlAuditSink(path: string): FlushableAuditSink {
       throw error;
     }
     // Audit events carry tool arguments; match the config file's hygiene.
-    // The mode applies on creation only, like everywhere else.
     await appendFile(path, `${JSON.stringify(event)}\n`, { encoding: 'utf8', mode: 0o600 });
+    if (!modeEnsured) {
+      // The creation mode does not apply to a pre-existing file — tighten it
+      // once, best-effort, after the file is guaranteed to exist.
+      modeEnsured = true;
+      if (process.platform !== 'win32') {
+        await chmod(path, 0o600).catch(() => undefined);
+      }
+    }
   };
 
   return {

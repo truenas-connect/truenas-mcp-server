@@ -52,6 +52,13 @@ describe('prepareTraceFile', () => {
     expect(statSync(path).mode & 0o777).toBe(0o600);
   });
 
+  it('tightens permissions on a pre-existing file', () => {
+    const path = join(dir, 'trace.jsonl');
+    writeFileSync(path, '', { mode: 0o644 });
+    prepareTraceFile(path);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+
   it('throws on an unusable path', () => {
     const blocker = join(dir, 'not-a-directory');
     writeFileSync(blocker, '');

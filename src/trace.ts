@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
@@ -11,6 +11,10 @@ export function prepareTraceFile(path: string): void {
   mkdirSync(dirname(path), { recursive: true });
   // Frames include confirmation tokens and tool arguments — created 0600.
   appendFileSync(path, '', { mode: 0o600 });
+  if (process.platform !== 'win32') {
+    // The creation mode does not apply to a pre-existing file.
+    chmodSync(path, 0o600);
+  }
 }
 
 /**

@@ -121,7 +121,17 @@ async function serve(
   const catalog = createDefaultCatalog();
   const confirmations = new ConfirmationService();
   const audit = createAuditSink(config);
-  const executor = new ToolExecutor({ catalog, registry, confirmations, audit });
+  const executor = new ToolExecutor({
+    catalog,
+    registry,
+    confirmations,
+    audit,
+    // Explicitly stderr: stdout is the MCP channel, and where audit failures
+    // get reported must not depend on the core's default handler.
+    onAuditError: (error, event) => {
+      console.error(`Audit sink failed for ${event.tool}/${event.phase}:`, error);
+    },
+  });
   const server = createServer({ catalog, executor, confirmations });
 
   const shutdown = createShutdown({
