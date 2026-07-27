@@ -162,6 +162,18 @@ async function serve(
 main().catch((error: unknown) => {
   // Printed verbatim on the assumption that core/api-client errors never
   // embed credentials (keys live only in the config file).
-  console.error(error instanceof Error ? error.message : String(error));
+  //
+  // Expected startup failures (bad config, unreachable system, CLI misuse)
+  // are plain Errors with curated messages, or parseArgs errors; anything
+  // else is a bug and gets its stack for diagnosability.
+  if (error instanceof Error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    const expected =
+      (error.constructor === Error && error.message.length > 0) ||
+      (typeof code === 'string' && code.startsWith('ERR_PARSE_ARGS'));
+    console.error(expected ? error.message : (error.stack ?? error.message));
+  } else {
+    console.error(String(error));
+  }
   process.exit(1);
 });

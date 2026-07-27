@@ -1,4 +1,5 @@
 import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
+import type { ElicitResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ConfirmationGate, ConfirmationService, Plan } from '@truenas/mcp-base';
 
 /** Human-readable rendering of a plan: what would run, where, exactly. */
@@ -44,14 +45,18 @@ export class ElicitationGate implements ConfirmationGate {
   ) {}
 
   async requestApproval(plan: Plan, key: string): Promise<string | null> {
-    let result;
+    let result: ElicitResult;
     try {
       result = await this.server.elicitInput(
         {
           message:
             `TrueNAS MCP wants to run a mutating operation:\n\n${renderPlan(plan)}\n\n` +
             'Accept to execute exactly these calls, or decline to cancel.',
-          // No form fields: accept/decline itself is the answer.
+          // No form fields: accept/decline itself is the answer. Compatibility
+          // note: message-only elicitation with an empty properties object is
+          // handled by the reference SDK and Inspector, but not guaranteed
+          // uniform across MCP clients — a client that chokes on it surfaces
+          // as an error below, which fails closed (not approved).
           requestedSchema: { type: 'object', properties: {} },
         },
         { timeout: this.timeoutMs },

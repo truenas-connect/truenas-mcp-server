@@ -79,6 +79,15 @@ describe('cli', () => {
     const { code, stderr } = await cli(['--config', join(dir, 'nope.json')]);
     expect(code).toBe(1);
     expect(stderr).toContain('Config file not found');
+    // Expected failures print the curated message only — no stack trace.
+    expect(stderr).not.toMatch(/^\s+at /m);
+  }, 30_000);
+
+  it('rejects unknown options without a stack trace', async () => {
+    const { code, stderr } = await cli(['--bogus']);
+    expect(code).toBe(1);
+    expect(stderr).toContain("'--bogus'");
+    expect(stderr).not.toMatch(/^\s+at /m);
   }, 30_000);
 
   it('routes init and exits non-zero when stdin ends early', async () => {
