@@ -82,6 +82,15 @@ describe('runInit', () => {
     expect(written()).toMatchObject({ systems: [{ name: 'nas1', host: 'nas.local:8443' }] });
   });
 
+  it('tightens a pre-existing audit file to mode 600 during the probe', async () => {
+    const audit = join(dir, 'audit.jsonl');
+    writeFileSync(audit, '', { mode: 0o644 });
+    const { ok, transcript } = await run(['', 'nas.local', '', 'k', 'n', '', audit, 'n']);
+    expect(ok).toBe(true);
+    expect(transcript).toContain(`✓ Audit log ${audit} is writable`);
+    expect(statSync(audit).mode & 0o777).toBe(0o600);
+  });
+
   it('rejects a directory as the audit log path and probes the accepted one', async () => {
     const audit = join(dir, 'audit.jsonl');
     const { ok, transcript } = await run(['', 'nas.local', '', 'k', 'n', '', dir, audit, 'n']);

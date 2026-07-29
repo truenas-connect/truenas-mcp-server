@@ -318,6 +318,12 @@ export async function runInit(options: InitOptions): Promise<boolean> {
       try {
         mkdirSync(dirname(config.auditLog), { recursive: true });
         appendFileSync(config.auditLog, '', { mode: 0o600 });
+        if (process.platform !== 'win32') {
+          // As with the config file above: the creation mode does not apply
+          // to a pre-existing file, and the ✓ must not bless one that other
+          // users can read.
+          chmodSync(config.auditLog, 0o600);
+        }
         write(`✓ Audit log ${config.auditLog} is writable\n`);
       } catch (error) {
         write(
