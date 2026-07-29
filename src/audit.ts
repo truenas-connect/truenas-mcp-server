@@ -59,8 +59,18 @@ export function jsonlAuditSink(path: string): FlushableAuditSink {
       tail = result.catch(() => undefined);
       return result;
     },
-    flush() {
-      return tail.then(() => undefined);
+    async flush() {
+      // A record() enqueued while the drain is in flight chains onto a tail
+      // this flush never captured — re-read until stable, so a shutdown
+      // racing a last-moment write still drains it. Unbounded enqueueing
+      // cannot hang exit: the shutdown drain is capped by drainTimeoutMs.
+      for (;;) {
+        const current = tail;
+        await current;
+        if (current === tail) {
+          return;
+        }
+      }
     },
   };
 }

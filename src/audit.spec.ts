@@ -57,6 +57,22 @@ describe('jsonlAuditSink', () => {
     await sink.flush();
     expect(readFileSync(path, 'utf8').trimEnd().split('\n')).toHaveLength(2);
   });
+
+  it('flush drains a write enqueued after the flush started', async () => {
+    const path = join(dir, 'audit.jsonl');
+    const sink = jsonlAuditSink(path);
+    void sink.record(event('first'));
+    // The shutdown race: the drain begins, then an in-flight tool call's
+    // audit write lands one tick later — it must still be part of the drain.
+    const flushed = sink.flush();
+    void sink.record(event('late'));
+    await flushed;
+    const lines = readFileSync(path, 'utf8').trimEnd().split('\n');
+    expect(lines.map((line) => (JSON.parse(line) as AuditEvent).tool)).toEqual([
+      'first',
+      'late',
+    ]);
+  });
 });
 
 describe('createAuditSink', () => {
