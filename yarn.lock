@@ -847,13 +847,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@truenas/mcp-base@git+https://github.com/truenas-connect/truenas-mcp-base.git#prototype":
+"@truenas/mcp-base@git+https://github.com/truenas-connect/truenas-mcp-base.git#main":
   version: 0.0.0
-  resolution: "@truenas/mcp-base@https://github.com/truenas-connect/truenas-mcp-base.git#commit=79a3162263faa4bbeed4be3d3ced82159b8dc467"
+  resolution: "@truenas/mcp-base@https://github.com/truenas-connect/truenas-mcp-base.git#commit=5919e310493f97395291db3dfbb1f23361abd2bc"
   peerDependencies:
     "@truenas/api-client": ^1.0.0
     rxjs: ^7.8.0
-  checksum: 10c0/06d38dc803d5eb4a702523d774df8e7d251452385a1eed825cfd01b7b46595adc33b56230879ac4472fb21f734470d925d141ed9779374fa3111f5844e06eaa0
+  checksum: 10c0/8c84b5536dee82702e3a441f79058a95b791c70a1ac11d7106baf1994a2168e86c6819e2429038765397aac56e06e46e1b56430b2aacc1a4ba8237517d9c32ed
   languageName: node
   linkType: hard
 
@@ -864,7 +864,7 @@ __metadata:
     "@eslint/js": "npm:^9.18.0"
     "@modelcontextprotocol/sdk": "npm:^1.29.0"
     "@truenas/api-client": "npm:^1.0.2"
-    "@truenas/mcp-base": "git+https://github.com/truenas-connect/truenas-mcp-base.git#prototype"
+    "@truenas/mcp-base": "git+https://github.com/truenas-connect/truenas-mcp-base.git#main"
     "@types/node": "npm:^22.0.0"
     "@vitest/coverage-v8": "npm:^3.0.0"
     eslint: "npm:^9.18.0"

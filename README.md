@@ -64,7 +64,8 @@ with `--config` / `TRUENAS_MCP_CONFIG`):
 
 - `name` is how the LLM addresses the system (`"all"` is reserved).
 - `host` (one) or `hostnames` (primary first, then fallbacks) — exactly one of
-  the two.
+  the two. Each entry is a bare `host[:port]` (no URL scheme or path); write
+  IPv6 literals bracketed, e.g. `"[2001:db8::1]"`.
 - API keys are user-scoped TrueNAS API keys (System → API Keys). The file
   holds credentials: `chmod 600` it (the server warns otherwise).
 - `auditLog` is optional; without it audit events go to stderr.
