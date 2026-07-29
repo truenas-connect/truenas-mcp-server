@@ -20,6 +20,12 @@ export interface ServerConfig {
   /** Optional JSONL audit log path. When unset, audit events go to stderr. */
   auditLog?: string;
   /**
+   * Refuse mutating tool calls from MCP clients that do not support
+   * elicitation, instead of falling back to the in-chat plan+token flow —
+   * that fallback's only human gate is the host's own tool-call prompt.
+   */
+  requireElicitation?: boolean;
+  /**
    * Accept self-signed TLS certificates (TrueNAS ships one by default).
    * Node's native fetch/WebSocket have no per-connection TLS hook, so this is
    * necessarily process-wide (NODE_TLS_REJECT_UNAUTHORIZED=0) — it disables
@@ -120,7 +126,7 @@ export function parseConfig(text: string, source = 'config'): ServerConfig {
   if (!isPlainObject(raw)) {
     throw new Error(`${source} must be a JSON object`);
   }
-  rejectUnknownKeys(raw, ['systems', 'auditLog', 'allowSelfSigned'], source);
+  rejectUnknownKeys(raw, ['systems', 'auditLog', 'allowSelfSigned', 'requireElicitation'], source);
   const systems = raw['systems'];
   if (!Array.isArray(systems) || systems.length === 0) {
     throw new Error(`${source}: "systems" must be a non-empty array`);
@@ -130,6 +136,12 @@ export function parseConfig(text: string, source = 'config'): ServerConfig {
   };
   if (raw['auditLog'] !== undefined) {
     config.auditLog = expandTilde(requireString(raw['auditLog'], `${source}: auditLog`));
+  }
+  if (raw['requireElicitation'] !== undefined) {
+    if (typeof raw['requireElicitation'] !== 'boolean') {
+      throw new Error(`${source}: requireElicitation must be a boolean`);
+    }
+    config.requireElicitation = raw['requireElicitation'];
   }
   if (raw['allowSelfSigned'] !== undefined) {
     if (typeof raw['allowSelfSigned'] !== 'boolean') {

@@ -27,6 +27,7 @@ interface SetupOptions {
   /** System names whose plan phase fails. */
   planFailsOn?: string[];
   elicitationTimeoutMs?: number;
+  requireElicitation?: boolean;
 }
 
 async function setup(options: SetupOptions = {}) {
@@ -95,6 +96,9 @@ async function setup(options: SetupOptions = {}) {
     confirmations,
     ...(options.elicitationTimeoutMs !== undefined
       ? { elicitationTimeoutMs: options.elicitationTimeoutMs }
+      : {}),
+    ...(options.requireElicitation !== undefined
+      ? { requireElicitation: options.requireElicitation }
       : {}),
   });
 
@@ -221,6 +225,44 @@ describe('tools/call — mutating, elicitation path', () => {
     expect(parseResults(text(result))).toEqual([
       { system: 'a', status: 'SUCCESS', value: { created: 'a-snap' } },
     ]);
+  });
+});
+
+describe('tools/call — requireElicitation', () => {
+  it('refuses mutating calls from a client without elicitation, minting no token', async () => {
+    const { client, executeSpy, auditEvents } = await setup({ requireElicitation: true });
+    const result = await client.callTool({
+      name: 'snap_create',
+      arguments: { dataset: 'tank/x', systems: 'all' },
+    });
+    expect((result as CallToolResult).isError).toBe(true);
+    const body = text(result);
+    expect(body).toContain('does not support elicitation');
+    expect(body).not.toContain('Confirmation token');
+    expect(executeSpy).not.toHaveBeenCalled();
+    // The refusal happens after planning (that is how mutating calls are
+    // detected), but nothing must reach the execute phase.
+    expect(auditEvents.map((event) => event.phase)).toEqual(['plan']);
+  });
+
+  it('leaves read-only calls untouched for a client without elicitation', async () => {
+    const { client } = await setup({ requireElicitation: true });
+    const result = await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } });
+    expect((result as CallToolResult).isError).toBeUndefined();
+    expect(parseResults(text(result))).toHaveLength(2);
+  });
+
+  it('leaves the elicitation path untouched', async () => {
+    const { client, executeSpy } = await setup({
+      requireElicitation: true,
+      onElicit: () => ({ action: 'accept' }),
+    });
+    const result = await client.callTool({
+      name: 'snap_create',
+      arguments: { dataset: 'tank/x', systems: 'all' },
+    });
+    expect(executeSpy).toHaveBeenCalledTimes(2);
+    expect((result as CallToolResult).isError).toBeUndefined();
   });
 });
 

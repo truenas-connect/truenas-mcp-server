@@ -132,7 +132,14 @@ async function serve(
       console.error(`Audit sink failed for ${event.tool}/${event.phase}:`, error);
     },
   });
-  const server = createServer({ catalog, executor, confirmations });
+  const server = createServer({
+    catalog,
+    executor,
+    confirmations,
+    ...(config.requireElicitation !== undefined
+      ? { requireElicitation: config.requireElicitation }
+      : {}),
+  });
 
   const shutdown = createShutdown({
     flush: () => audit.flush(),

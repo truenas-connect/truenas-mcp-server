@@ -38,6 +38,14 @@ describe('parseConfig', () => {
     expect(config.allowSelfSigned).toBe(true);
   });
 
+  it('accepts requireElicitation and rejects non-boolean values', () => {
+    const config = parseConfig(JSON.stringify({ systems: [system], requireElicitation: true }));
+    expect(config.requireElicitation).toBe(true);
+    expect(() =>
+      parseConfig(JSON.stringify({ systems: [system], requireElicitation: 'yes' })),
+    ).toThrow(/requireElicitation must be a boolean/);
+  });
+
   it('expands ~ in auditLog', () => {
     const config = parseConfig(JSON.stringify({ systems: [system], auditLog: '~/audit.jsonl' }));
     expect(config.auditLog).toBe(join(homedir(), 'audit.jsonl'));

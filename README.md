@@ -69,6 +69,10 @@ with `--config` / `TRUENAS_MCP_CONFIG`):
 - API keys are user-scoped TrueNAS API keys (System → API Keys). The file
   holds credentials: `chmod 600` it (the server warns otherwise).
 - `auditLog` is optional; without it audit events go to stderr.
+- `requireElicitation` (optional): refuse mutating tools when the connected
+  MCP client does not support elicitation, instead of falling back to the
+  in-chat plan+token flow (see [Confirmation flow](#confirmation-flow)).
+  Read-only tools keep working either way.
 - `allowSelfSigned` (optional): accept TrueNAS's default self-signed
   certificate (`init` asks about this). Node has no per-connection TLS hook,
   so this disables certificate verification **for the whole server process**
@@ -117,7 +121,9 @@ it). How the user approval happens depends on the MCP client:
   (so nothing *other* than what was shown can run). A misbehaving LLM could
   self-confirm, so on this path safety rests entirely on the host prompting
   you for every tool call. Prefer an elicitation-capable client for mutating
-  operations.
+  operations — or set `requireElicitation` in the config to disable this
+  fallback entirely: mutating calls from a client without elicitation are
+  then refused (read-only tools still work).
 
 Either way the token binds the exact tool, arguments, and target systems that
 were planned — any drift is rejected and needs a fresh plan.

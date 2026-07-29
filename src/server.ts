@@ -23,6 +23,8 @@ export interface ServerDeps {
   confirmations: ConfirmationService;
   /** Cap on waiting for an elicitation answer; default 5 minutes (token TTL). */
   elicitationTimeoutMs?: number;
+  /** Refuse mutating calls instead of using the plan+token fallback. */
+  requireElicitation?: boolean;
 }
 
 type PlanOutcome = Extract<ExecutionOutcome, { type: 'PLAN' }>;
@@ -60,12 +62,15 @@ function resultsText(results: SystemResult<unknown>[], prefix?: string): string 
  * - Otherwise → the plan and a token are returned to the LLM with instructions
  *   to re-call only after the user approves in chat. Weaker: the host's native
  *   per-tool-call permission prompt is the human gate (documented in README).
+ *   `requireElicitation` disables this fallback: mutating calls from a client
+ *   without elicitation are refused outright, read-only calls still work.
  */
 export function createServer({
   catalog,
   executor,
   confirmations,
   elicitationTimeoutMs,
+  requireElicitation,
 }: ServerDeps): Server {
   const server = new Server(
     { name: 'truenas-mcp-server', version: VERSION },
@@ -89,6 +94,16 @@ export function createServer({
       }
       if (server.getClientCapabilities()?.elicitation) {
         return await approveAndExecute(outcome);
+      }
+      if (requireElicitation === true) {
+        return textResult(
+          `Mutating tools are disabled for this client: the server is configured with ` +
+            `"requireElicitation" and this MCP client does not support elicitation, so no ` +
+            `plan could be approved by the user in the host UI. Nothing was executed. ` +
+            `Read-only tools remain available. To run mutating tools, connect with an ` +
+            `elicitation-capable MCP host, or remove "requireElicitation" from the server config.`,
+          true,
+        );
       }
       const token = confirmations.mint(outcome.key);
       return textResult(
