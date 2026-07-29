@@ -3,7 +3,16 @@
  * "one file the user writes once" doesn't have to be written by hand.
  */
 
-import { chmodSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import {
+  accessSync,
+  appendFileSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
 import { Writable } from 'node:stream';
@@ -14,7 +23,7 @@ import {
   defaultClientFactory,
   type ClientFactory,
 } from '@truenas/mcp-base';
-import { applyTlsPolicy, parseConfig } from '@/config';
+import { applyTlsPolicy, expandTilde, parseConfig } from '@/config';
 
 /** Interactive input (stdin) ended before the questions were answered. */
 export class InputEndedError extends Error {
@@ -172,6 +181,19 @@ export async function runInit(options: InitOptions): Promise<boolean> {
         return false;
       }
     }
+    // An unwritable destination must fail here, before any questions — not at
+    // the write that happens after the API key has already been typed in.
+    try {
+      mkdirSync(dirname(options.path), { recursive: true });
+      if (existsSync(options.path) && statSync(options.path).isDirectory()) {
+        write(`${options.path} is a directory — the config path must be a file.\n`);
+        return false;
+      }
+      accessSync(existsSync(options.path) ? options.path : dirname(options.path), constants.W_OK);
+    } catch (error) {
+      write(`Cannot write ${options.path}: ${error instanceof Error ? error.message : String(error)}\n`);
+      return false;
+    }
     write(`Creating ${options.path}\n\n`);
 
     const entries: FileSystemEntry[] = [];
@@ -196,13 +218,48 @@ export async function runInit(options: InitOptions): Promise<boolean> {
           .split(',')
           .map((host) => host.trim())
           .filter((host) => host !== '');
+      // The client interpolates each host straight into "wss://<host>/…", so
+      // only a bare host[:port] can work — catch URLs and unparseable values
+      // at the prompt instead of at connect time.
+      const hostProblem = (host: string): string | undefined => {
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(host)) {
+          return `"${host}" must be a bare host, without the URL scheme`;
+        }
+        let parsed: URL;
+        try {
+          parsed = new URL(`https://${host}`);
+        } catch {
+          return `"${host}" is not a valid hostname or IP address`;
+        }
+        if (
+          parsed.username !== '' ||
+          parsed.password !== '' ||
+          parsed.pathname !== '/' ||
+          parsed.search !== '' ||
+          parsed.hash !== ''
+        ) {
+          return `"${host}" must be a bare host[:port], without a path or credentials`;
+        }
+        return undefined;
+      };
       // Validated here, not left to the final parseConfig round-trip: an
       // answer like "," would otherwise crash after every remaining question
       // has been answered instead of re-prompting this one field.
       const hostnames = splitHosts(
         await ask('  Host (comma-separate fallback hosts)', {
-          validate: (value) =>
-            splitHosts(value).length === 0 ? 'At least one host is required' : undefined,
+          validate: (value) => {
+            const hosts = splitHosts(value);
+            if (hosts.length === 0) {
+              return 'At least one host is required';
+            }
+            for (const host of hosts) {
+              const problem = hostProblem(host);
+              if (problem !== undefined) {
+                return problem;
+              }
+            }
+            return undefined;
+          },
         }),
       );
       const username = await ask('  Username the API key belongs to', { def: 'truenas_admin' });
@@ -219,9 +276,19 @@ export async function runInit(options: InitOptions): Promise<boolean> {
     write('disables certificate verification for ALL configured systems.\n');
     const allowSelfSigned = await confirm('Allow self-signed certificates?', false);
 
-    const auditLog = await ask('JSONL audit log path (empty = audit to stderr)', {
-      required: false,
-    });
+    const auditLog = await ask(
+      'JSONL audit log path (a file, e.g. ~/.local/state/truenas-mcp/audit.jsonl; empty = audit to stderr)',
+      {
+        required: false,
+        validate: (value) => {
+          const expanded = expandTilde(value);
+          if (existsSync(expanded) && statSync(expanded).isDirectory()) {
+            return `${value} is a directory — enter a path for the JSONL file itself`;
+          }
+          return undefined;
+        },
+      },
+    );
 
     const text = `${JSON.stringify(
       {
@@ -243,6 +310,23 @@ export async function runInit(options: InitOptions): Promise<boolean> {
       chmodSync(options.path, 0o600);
     }
     write(`\nWrote ${options.path} (mode 600 — it contains API keys)\n`);
+
+    if (config.auditLog !== undefined) {
+      // The runtime sink reports write failures without altering tool flow,
+      // so a bad target would otherwise fail quietly on every action — probe
+      // it now, the same way the sink will write to it.
+      try {
+        mkdirSync(dirname(config.auditLog), { recursive: true });
+        appendFileSync(config.auditLog, '', { mode: 0o600 });
+        write(`✓ Audit log ${config.auditLog} is writable\n`);
+      } catch (error) {
+        write(
+          `✗ Cannot write audit log ${config.auditLog}: ${error instanceof Error ? error.message : String(error)}\n`,
+        );
+        write('  The config file was written anyway — fix the path and re-run "init".\n');
+        return false;
+      }
+    }
 
     if (await confirm('Verify connectivity to the configured system(s) now?', true)) {
       const timeoutMs = options.verifyTimeoutMs ?? 10_000;

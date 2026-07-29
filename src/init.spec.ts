@@ -60,12 +60,55 @@ describe('runInit', () => {
   });
 
   it('turns comma-separated hosts into a hostnames list and keeps the audit log', async () => {
-    const { ok } = await run(['nas1', 'a.local, 10.0.0.5', 'root', 'k', 'n', '', '/tmp/audit.jsonl', 'n']);
+    const audit = join(dir, 'audit.jsonl');
+    const { ok, transcript } = await run(['nas1', 'a.local, 10.0.0.5', 'root', 'k', 'n', '', audit, 'n']);
     expect(ok).toBe(true);
     expect(written()).toEqual({
       systems: [{ name: 'nas1', hostnames: ['a.local', '10.0.0.5'], username: 'root', apiKey: 'k' }],
-      auditLog: '/tmp/audit.jsonl',
+      auditLog: audit,
     });
+    // The probe-write both confirmed and created the sink target.
+    expect(transcript).toContain(`✓ Audit log ${audit} is writable`);
+    expect(statSync(audit).mode & 0o777).toBe(0o600);
+  });
+
+  it('re-prompts on hosts that are URLs or not parseable, and accepts host:port', async () => {
+    const { ok, transcript } = await run([
+      'nas1', 'https://a.local', 'a b', 'nas.local:8443', '', 'k', 'n', '', '', 'n',
+    ]);
+    expect(ok).toBe(true);
+    expect(transcript).toContain('"https://a.local" must be a bare host');
+    expect(transcript).toContain('"a b" is not a valid hostname or IP address');
+    expect(written()).toMatchObject({ systems: [{ name: 'nas1', host: 'nas.local:8443' }] });
+  });
+
+  it('rejects a directory as the audit log path and probes the accepted one', async () => {
+    const audit = join(dir, 'audit.jsonl');
+    const { ok, transcript } = await run(['', 'nas.local', '', 'k', 'n', '', dir, audit, 'n']);
+    expect(ok).toBe(true);
+    expect(transcript).toContain(`${dir} is a directory`);
+    expect(written()).toMatchObject({ auditLog: audit });
+  });
+
+  it('keeps the written config and reports failure when the audit log is unwritable', async () => {
+    // A file where the audit log's parent directory should be: the mkdir in
+    // the probe fails the same way the runtime sink's would.
+    writeFileSync(join(dir, 'blocker'), '');
+    const audit = join(dir, 'blocker', 'audit.jsonl');
+    const { ok, transcript } = await run(['', 'nas.local', '', 'k', 'n', '', audit, 'n']);
+    expect(ok).toBe(false);
+    expect(transcript).toContain(`✗ Cannot write audit log ${audit}`);
+    expect(transcript).toContain('written anyway');
+    expect(written()).toMatchObject({ auditLog: audit });
+  });
+
+  it('aborts before asking anything when the config destination is unwritable', async () => {
+    writeFileSync(join(dir, 'blocker'), '');
+    path = join(dir, 'blocker', 'config.json');
+    const { ok, transcript } = await run([]);
+    expect(ok).toBe(false);
+    expect(transcript).toContain(`Cannot write ${path}`);
+    expect(transcript).not.toContain('First TrueNAS system');
   });
 
   it('re-prompts when the host answer contains no hosts', async () => {
