@@ -7,10 +7,9 @@ host(s) and API key(s). Fully functional air-gapped — no cloud account.
 
 > **Status:** prototype. This is the stdio adapter over
 > [`@truenas/mcp-base`](https://github.com/truenas-connect/truenas-mcp-base)
-> (consumed straight from its `prototype` branch as a git dependency), which
+> (consumed straight from its `main` branch as a git dependency), which
 > holds the tool catalog, system registry, multi-system fan-out, and the
-> plan/confirm safety model. See that repo's `docs/architecture-proposal.md`
-> for the overall design.
+> plan/confirm safety model. See that repo's README for the overall design.
 
 ## What works
 
