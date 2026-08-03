@@ -229,6 +229,22 @@ describe('tools/call — mutating, elicitation path', () => {
 });
 
 describe('tools/call — requireElicitation', () => {
+  it('defaults to refusing when the option is left unset', async () => {
+    // The default is the safety-relevant half of this option: an operator who
+    // never read the config docs must still get the refusal, not the fallback.
+    const { client, executeSpy, auditEvents } = await setup();
+    const result = await client.callTool({
+      name: 'snap_create',
+      arguments: { dataset: 'tank/x', systems: 'all' },
+    });
+    expect((result as CallToolResult).isError).toBe(true);
+    const body = text(result);
+    expect(body).toContain('does not support elicitation');
+    expect(body).not.toContain('Confirmation token');
+    expect(executeSpy).not.toHaveBeenCalled();
+    expect(auditEvents.map((event) => event.phase)).toEqual(['plan']);
+  });
+
   it('refuses mutating calls from a client without elicitation, minting no token', async () => {
     const { client, executeSpy, auditEvents } = await setup({ requireElicitation: true });
     const result = await client.callTool({
@@ -301,9 +317,9 @@ describe('tools/call — internal invariants', () => {
   });
 });
 
-describe('tools/call — mutating, fallback path (no elicitation)', () => {
+describe('tools/call — mutating, fallback path (opted in with requireElicitation: false)', () => {
   it('returns the plan and a token, then executes on the confirmed call', async () => {
-    const { client, executeSpy } = await setup();
+    const { client, executeSpy } = await setup({ requireElicitation: false });
     const planResult = await client.callTool({
       name: 'snap_create',
       arguments: { dataset: 'tank/x', systems: 'all' },
@@ -328,7 +344,7 @@ describe('tools/call — mutating, fallback path (no elicitation)', () => {
   });
 
   it('partial planning failure: instructs narrowing systems, and the narrowed confirm works', async () => {
-    const { client, executeSpy } = await setup({ planFailsOn: ['b'] });
+    const { client, executeSpy } = await setup({ planFailsOn: ['b'], requireElicitation: false });
     const planResult = await client.callTool({
       name: 'snap_create',
       arguments: { dataset: 'tank/x', systems: 'all' },
@@ -351,7 +367,7 @@ describe('tools/call — mutating, fallback path (no elicitation)', () => {
   });
 
   it('never writes reserved arguments (confirmation_token, systems) into audit events', async () => {
-    const { client, auditEvents } = await setup();
+    const { client, auditEvents } = await setup({ requireElicitation: false });
     const planResult = await client.callTool({
       name: 'snap_create',
       arguments: { dataset: 'tank/x', systems: 'all' },
@@ -369,7 +385,7 @@ describe('tools/call — mutating, fallback path (no elicitation)', () => {
   });
 
   it('rejects a confirmed call whose arguments drifted from the plan', async () => {
-    const { client, executeSpy } = await setup();
+    const { client, executeSpy } = await setup({ requireElicitation: false });
     const planResult = await client.callTool({
       name: 'snap_create',
       arguments: { dataset: 'tank/x', systems: 'all' },

@@ -68,10 +68,11 @@ with `--config` / `TRUENAS_MCP_CONFIG`):
 - API keys are user-scoped TrueNAS API keys (System → API Keys). The file
   holds credentials: `chmod 600` it (the server warns otherwise).
 - `auditLog` is optional; without it audit events go to stderr.
-- `requireElicitation` (optional): refuse mutating tools when the connected
-  MCP client does not support elicitation, instead of falling back to the
-  in-chat plan+token flow (see [Confirmation flow](#confirmation-flow)).
-  Read-only tools keep working either way.
+- `requireElicitation` (optional, **defaults to `true`**): refuse mutating
+  tools when the connected MCP client does not support elicitation. Set it to
+  `false` to opt into the weaker in-chat plan+token fallback instead (see
+  [Confirmation flow](#confirmation-flow)). Read-only tools keep working
+  either way.
 - `allowSelfSigned` (optional): accept TrueNAS's default self-signed
   certificate (`init` asks about this). Node has no per-connection TLS hook,
   so this disables certificate verification **for the whole server process**
@@ -112,17 +113,19 @@ it). How the user approval happens depends on the MCP client:
   client to prompt you with the exact plan (per-system API calls); accepting
   executes within the same call. The confirmation token never enters the
   LLM's context.
-- **Fallback (no elicitation)** — the server returns the plan *and* a
-  single-use, expiring token to the LLM, instructing it to present the plan
-  and re-call with the token only after you approve in chat. Be clear about
-  what protects you here: the token itself does **not** — it is minted before
-  any approval and only binds the plan's exact arguments and target systems
-  (so nothing *other* than what was shown can run). A misbehaving LLM could
-  self-confirm, so on this path safety rests entirely on the host prompting
-  you for every tool call. Prefer an elicitation-capable client for mutating
-  operations — or set `requireElicitation` in the config to disable this
-  fallback entirely: mutating calls from a client without elicitation are
-  then refused (read-only tools still work).
+- **Client does not support elicitation** — mutating calls are refused, and
+  nothing is executed. Read-only tools still work. This is the default; the
+  server would rather stop than approve a mutation it cannot show you.
+- **Fallback, opt-in via `"requireElicitation": false`** — the server returns
+  the plan *and* a single-use, expiring token to the LLM, instructing it to
+  present the plan and re-call with the token only after you approve in chat.
+  Be clear about what protects you here: the token itself does **not** — it is
+  minted before any approval and only binds the plan's exact arguments and
+  target systems (so nothing *other* than what was shown can run). A
+  misbehaving LLM could self-confirm, so on this path safety rests entirely on
+  the host prompting you for every tool call — and if you have told your host
+  to auto-approve this server's tools, nothing is checking. Only enable it
+  when you have a specific reason and understand that tradeoff.
 
 Either way the token binds the exact tool, arguments, and target systems that
 were planned — any drift is rejected and needs a fresh plan.
