@@ -122,9 +122,10 @@ at roughly 93–100% statements and 92–96% branch on real logic.
    (`requireElicitation !== false`, the role gate, token validation). Line
    coverage flatters it, because the dangerous path is the one not taken.
 
-4. **Floors are set at measured level and ratcheted up, never set
+4. **Floors are set at measured level and raised deliberately, never set
    aspirationally.** A gate that fails on the day it lands gets bypassed and
-   then ignored.
+   then ignored. A target above the measured figure is not a floor — it is
+   work, and it needs a phase that owns it.
 
 5. **A global average is not the gate.** A single number lets a safety-critical
    file rot while a well-covered one carries the average.
@@ -133,14 +134,31 @@ at roughly 93–100% statements and 92–96% branch on real logic.
 
 Two, both blocking:
 
-- **Ratchet** — global branch percentage may not decrease.
-- **Safety floor** — 95% branch, per file, on the files where the safety model
-  lives. All are at 92–95% today, so this is a short reach.
+- **Global floor** — global branch percentage may not decrease.
+- **Safety floor** — a per-file branch threshold on the files where the safety
+  model lives.
 
-| Repo | Files under the safety floor |
-| --- | --- |
-| `truenas-mcp-server` | `src/server.ts`, `src/gate.ts` |
-| `truenas-mcp-base` | `src/execution/executor.ts`, `src/execution/confirmation.ts`, `src/catalog/catalog.ts`, `src/registry/system-registry.ts` |
+| Repo | File | Branch today | Floor at Phase 0 | Target | Raised by |
+| --- | --- | --- | --- | --- | --- |
+| server | `src/server.ts` | 92.30 | 92 | 95 | Phase 1 |
+| server | `src/gate.ts` | 92.30 | 92 | 95 | Phase 1 |
+| base | `src/execution/executor.ts` | 92.06 | 92 | 95 | Phase 1b |
+| base | `src/registry/system-registry.ts` | 93.22 | 93 | 95 | Phase 1b |
+| base | `src/execution/confirmation.ts` | 94.11 | 94 | 95 | Phase 1b |
+| base | `src/catalog/catalog.ts` | 95.00 | 95 | 95 | already there |
+
+**Phase 0 sets these floors at measured level, not at the 95 target.** Five of
+the six are below 95 today, so landing the target as the initial floor would
+fail CI the day Phase 0 merges — exactly what rule 4 forbids. Reaching 95 is
+real work, and it belongs to a phase that owns it: `server.ts` and `gate.ts`
+are lifted by Phase 1 as a side effect of the matrix, and the three base files
+have no other phase touching them, so they get Phase 1b.
+
+**On the word "ratchet".** Vitest's `thresholds` are floors, not ratchets: a
+number fails on decrease but never raises itself. `coverage.thresholds
+.autoUpdate` does rewrite the config with current values, but it is
+deliberately **not** used here — it would mean CI rewriting a tracked file.
+Floors are raised by hand, in the same PR that raises the coverage.
 
 Vitest supports glob-scoped thresholds under `test.coverage.thresholds`, so
 both gates live in `vitest.config.ts` rather than in CI scripting.
@@ -155,8 +173,18 @@ reasoning.
 
 ## Phases
 
-Each phase is one PR. Phases 3 and 4 depend on Phase 2; the rest are
-independent.
+Each phase is one PR.
+
+```
+Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)
+          ->  Phase 1b  (base:   raises the floors Phase 0 recorded)
+Phase 2   ->  Phase 3
+          ->  Phase 4
+```
+
+Phase 0 and Phase 2 are independent of each other and of everything else, so
+either can go first. Phases 1 and 1b both need Phase 0 to have recorded the
+floors they raise.
 
 ### Phase 0 — coverage measurement and gates
 
@@ -170,7 +198,9 @@ Two small PRs, one per repo, since the safety-floor files span both.
   `cli.ts`'s exclusion comment must say it is subprocess-tested by
   `cli.spec.ts`, so a future reader does not "fix" it by deleting those tests.
 - Global branch threshold set to the measured post-exclusion figure.
-- Per-file 95% branch thresholds on the safety-floor files above.
+- Per-file branch thresholds on the safety-floor files, each set at its
+  **measured level** per the Gates table — not at the 95 target. Phase 0 must
+  land green.
 - CI calls the existing `test:coverage` script instead of `test`. The script
   and `@vitest/coverage-v8` are already present in both repos, so this is a
   CI-wiring change plus the config block — nothing new to install.
@@ -180,9 +210,9 @@ Two small PRs, one per repo, since the safety-floor files span both.
 it already measures 100% statements and 100% branch and needs no special
 handling.
 
-**Acceptance:** CI fails when a safety-floor file drops below 95% branch, and
-fails when the global branch figure decreases. Both verified by temporarily
-deleting a test locally.
+**Acceptance:** CI is green on landing, and fails when any safety-floor file
+drops below its recorded floor or when the global branch figure decreases.
+Both verified by temporarily deleting a test locally.
 
 ### Phase 1 — protocol conformance matrix (tier 1)
 
@@ -203,6 +233,36 @@ for the mutating tool. No new infrastructure, no production change.
 
 **Note:** several cells already exist. Extend and reorganise rather than
 duplicating — check existing test names before adding.
+
+**Coverage side effect:** this phase is what lifts `server.ts` and `gate.ts`
+from 92.30 branch to the 95 target (uncovered today: `server.ts` lines 96 and
+132, `gate.ts` line 68). Raise both floors to 95 in this PR, not in Phase 0.
+
+### Phase 1b — raise the base safety files to the 95% branch floor
+
+Base repo. Independent of Phase 1, which is server-only.
+
+**Problem:** `executor.ts` (92.06), `system-registry.ts` (93.22) and
+`confirmation.ts` (94.11) sit below the 95 target with no other phase touching
+them. Without this phase the target is aspirational, which rule 4 forbids.
+
+**Deliverables**
+
+Cover the outstanding branches, then raise each file's floor to 95:
+
+| File | Uncovered today |
+| --- | --- |
+| `src/execution/executor.ts` | 83-84, 115-116 |
+| `src/registry/system-registry.ts` | 91-92, 173 |
+| `src/execution/confirmation.ts` | 99-100 |
+
+**Acceptance:** all three at or above 95% branch, floors raised in the same PR.
+
+**Judgement required:** look at what each uncovered branch actually is before
+writing a test for it. An unreachable defensive branch is better excluded with
+a comment explaining why than covered by a contrived test that exists only to
+move a number. Rule 4's point is that the figure should track real assurance —
+gaming it is worse than leaving the floor where it is and saying so.
 
 ### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path
 
@@ -250,8 +310,15 @@ phase is *mirror the `init.ts` seam onto the serve path*, not *extract
 - `runServer` owns: trace-file preparation, `new SystemRegistry()`,
   `connectSystems(registry, fileCredentialProvider(config), factory)`, the
   serve body, and the existing `closeAll()` rollback on startup failure.
-- `main()` retains argument parsing, config loading, and the TLS policy plus
-  its stderr warning.
+- `runServer` **also applies the TLS policy and emits its stderr warning.**
+  Today `applyTlsPolicy` runs at `cli.ts:85-91`, before `connectSystems` at
+  `cli.ts:102`, because clients read the process-global TLS setting at connect
+  time. Leaving TLS in `main()` while `connectSystems` moves into `runServer`
+  would turn that ordering into a cross-boundary caller contract — and a caller
+  that got it wrong would silently start rejecting self-signed certificates,
+  with nothing in the error pointing at the cause. Moving it removes the
+  contract instead of documenting it.
+- `main()` retains argument parsing and config loading only.
 - Export `runServer` from `src/index.ts`.
 
 **Two ordering invariants must survive the move.** Both are load-bearing and
