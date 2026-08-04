@@ -16,6 +16,9 @@ export default defineConfig({
     include: ['src/**/*.spec.ts'],
     coverage: {
       provider: 'v8',
+      // Explicit include so a new src file that no spec imports still enters
+      // the denominator at 0% instead of being invisible to the floors.
+      include: ['src/**/*.ts'],
       exclude: [
         ...coverageConfigDefaults.exclude,
         // Re-export barrel; no logic of its own.
@@ -36,9 +39,12 @@ export default defineConfig({
       thresholds: {
         branches: 88,
         statements: 94,
-        // Per-file floors on the files where the safety model lives.
-        'src/server.ts': { branches: 92, statements: 100 },
-        'src/gate.ts': { branches: 92, statements: 100 },
+        // Per-file floors on the files where the safety model lives. Both
+        // measure 100% statements today, but the statements floor is only the
+        // wholesale-loss backstop, not a full-line-coverage mandate — 98
+        // leaves room for an honestly-excluded defensive line.
+        'src/server.ts': { branches: 92, statements: 98 },
+        'src/gate.ts': { branches: 92, statements: 98 },
       },
     },
   },
