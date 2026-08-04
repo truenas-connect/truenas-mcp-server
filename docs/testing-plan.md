@@ -83,6 +83,7 @@ server (all)      79.02    88.41
   server.ts      100.00    92.30
   gate.ts        100.00    92.30
   shutdown.ts    100.00   100.00
+  version.ts     100.00   100.00
   trace.ts        96.55    85.71
   init.ts         95.36    87.50
   config.ts       89.10    86.88
@@ -170,7 +171,14 @@ Two small PRs, one per repo, since the safety-floor files span both.
   `cli.spec.ts`, so a future reader does not "fix" it by deleting those tests.
 - Global branch threshold set to the measured post-exclusion figure.
 - Per-file 95% branch thresholds on the safety-floor files above.
-- CI runs `test:coverage` instead of `test`.
+- CI calls the existing `test:coverage` script instead of `test`. The script
+  and `@vitest/coverage-v8` are already present in both repos, so this is a
+  CI-wiring change plus the config block — nothing new to install.
+
+`src/version.ts` is deliberately **not** excluded. It has runtime code
+(`createRequire(import.meta.url)('../package.json')`), so it does report, but
+it already measures 100% statements and 100% branch and needs no special
+handling.
 
 **Acceptance:** CI fails when a safety-floor file drops below 95% branch, and
 fails when the global branch figure decreases. Both verified by temporarily
@@ -196,26 +204,69 @@ for the mutating tool. No new infrastructure, no production change.
 **Note:** several cells already exist. Extend and reorganise rather than
 duplicating — check existing test names before adding.
 
-### Phase 2 — extract and export `serve()`
+### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path
 
 The only phase that changes production code. Agreed 2026-08-04.
 
-**Problem:** `main()` and `serve()` in `src/cli.ts` are module-private, and
-`connectSystems(registry, fileCredentialProvider(config))` is called with no
-factory argument, so the serve path always uses `defaultClientFactory`.
-`init.ts` already accepts an injectable `clientFactory` via `InitOptions`; the
-serve path has no equivalent seam.
+**Problem:** the serve path constructs its clients with `defaultClientFactory`
+and offers no way to substitute them.
+
+Note carefully *where* that happens, because it is not where it first appears.
+`connectSystems(registry, fileCredentialProvider(config))` is called at
+`src/cli.ts:102`, inside **`main()`** — before serving begins. `serve()` at
+`src/cli.ts:115` then receives an **already-populated registry** and never
+touches client construction at all. Giving `serve()` an optional
+`clientFactory` would therefore thread it nowhere: by the time `serve()` runs,
+the clients already exist.
+
+`init.ts` already has exactly the seam this phase needs, at `src/init.ts:345`:
+
+```ts
+const factory = options.clientFactory ?? defaultClientFactory;
+```
+
+wrapped in a tracking factory around its own `connectSystems` call
+(`src/init.ts:341-354`). `init.ts` imports `defaultClientFactory` and
+`ClientFactory`; `cli.ts` imports neither. So the accurate framing of this
+phase is *mirror the `init.ts` seam onto the serve path*, not *extract
+`serve()`*.
 
 **Deliverables**
 
-- Move `serve()` into its own module, export it from `src/index.ts`.
-- Give it an optional `clientFactory`, mirroring `InitOptions.clientFactory`.
-- `cli.ts` calls the exported function.
+- Export a single entry point that spans **connect and serve together** — the
+  `connectSystems` call currently in `main()` plus the body of `serve()`. A
+  suggested shape:
+
+  ```ts
+  export interface RunServerOptions {
+    configPath: string;
+    tracePath?: string;
+    /** Injectable for tests; defaults to the core's API-key factory. */
+    clientFactory?: ClientFactory;
+  }
+  export function runServer(config: ServerConfig, options: RunServerOptions): Promise<void>;
+  ```
+
+- `runServer` owns: trace-file preparation, `new SystemRegistry()`,
+  `connectSystems(registry, fileCredentialProvider(config), factory)`, the
+  serve body, and the existing `closeAll()` rollback on startup failure.
+- `main()` retains argument parsing, config loading, and the TLS policy plus
+  its stderr warning.
+- Export `runServer` from `src/index.ts`.
+
+**Two ordering invariants must survive the move.** Both are load-bearing and
+both currently carry comments in `cli.ts` explaining why:
+
+- The trace file is prepared *before* anything serves, so an unusable path
+  fails at startup rather than killing a connected server.
+- `enableTracing` is called immediately after `server.connect(transport)` with
+  **no intervening `await`**, or the initialize handshake escapes the trace.
 
 **Rationale for the shape:** the real binary and the Phase 4 fixture must drive
-the *same* wiring. A fixture that reimplemented `serve()` would miss exactly
-the bugs tier 2 exists to catch — for instance `requireElicitation` not being
-threaded through from config.
+the *same* wiring. If the exported unit began after connect, the fixture would
+have to perform its own connect, and would then no longer be testing the real
+path — including that `fileCredentialProvider(config)` is the provider used and
+that a connect failure closes the clients that did connect.
 
 **Explicitly rejected:** a `TRUENAS_MCP_CLIENT_FACTORY` environment variable.
 It is easier, but it is a production surface that lets anyone with environment
@@ -238,8 +289,9 @@ regressions — none of which `tsx`-on-source can see.
 
 **Deliverables**
 
-- A fixture importing the exported `serve` from `dist/`, injecting a fake
-  `ClientFactory` at the trusted seam, connected over real stdio pipes.
+- A fixture importing the exported `runServer` (Phase 2) from `dist/`, passing
+  a fake `ClientFactory` so the real connect-and-serve path runs against
+  substituted clients over real stdio pipes.
 - Driven by the MCP SDK `Client`.
 - Assertions: initialize handshake; `tools/list`; read-only call round-trip;
   mutating call refused under the default; **stdout carries nothing but
