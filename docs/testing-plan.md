@@ -191,6 +191,12 @@ forbids. Reaching 95 is real work, and it belongs to a phase that owns it:
 and the three base files have no other phase touching them, so they get
 Phase 1b.
 
+The 95 target is a minimum, not a stopping point. When the phase that owns a
+file lands its coverage above the target, the floor is set at the *achieved*
+level per rule 4 — less the same headroom the statements floors use: a file
+measuring 100 is floored at 98, leaving room for one honestly-excluded
+defensive branch rather than mandating full coverage forever.
+
 **On the word "ratchet".** Vitest's `thresholds` are floors, not ratchets: a
 number fails on decrease but never raises itself. `coverage.thresholds
 .autoUpdate` does rewrite the config with current values, but it is

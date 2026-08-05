@@ -47,8 +47,8 @@ export default defineConfig({
         // measure 100% statements today, but the statements floor is only the
         // wholesale-loss backstop, not a full-line-coverage mandate — 98
         // leaves room for an honestly-excluded defensive line.
-        'src/server.ts': { branches: 95, statements: 98 },
-        'src/gate.ts': { branches: 95, statements: 98 },
+        'src/server.ts': { branches: 98, statements: 98 },
+        'src/gate.ts': { branches: 98, statements: 98 },
       },
     },
   },
