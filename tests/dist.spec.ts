@@ -24,6 +24,7 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   main: string;
   module: string;
   types: string;
+  exports: Record<string, Record<'import' | 'require', Record<'types' | 'default', string>>>;
 };
 
 beforeAll(() => {
@@ -124,13 +125,23 @@ describe('packaged artifact shape', () => {
   });
 
   it('maps the bin name to a file that exists inside the shipped "files"', () => {
-    expect(pkg.bin['truenas-mcp-server']).toBe('./dist/cli.js');
+    const binPath = pkg.bin['truenas-mcp-server'];
+    expect(binPath).toBe('./dist/cli.js');
     expect(pkg.files).toContain('dist');
-    expect(existsSync(join(root, pkg.bin['truenas-mcp-server'] ?? ''))).toBe(true);
+    expect(existsSync(join(root, binPath))).toBe(true);
   });
 
-  it('ships both module formats and the types entry', () => {
-    for (const relative of [pkg.main, pkg.module, pkg.types]) {
+  it('ships every file that main/module/types and the exports map reference', () => {
+    // The exports map is the part a source test genuinely cannot cover: a
+    // tsup dts regression dropping e.g. index.d.cts breaks CJS consumers'
+    // types while everything else stays green.
+    const referenced = [pkg.main, pkg.module, pkg.types];
+    for (const entry of Object.values(pkg.exports)) {
+      for (const format of Object.values(entry)) {
+        referenced.push(format.types, format.default);
+      }
+    }
+    for (const relative of referenced) {
       expect(existsSync(join(root, relative)), relative).toBe(true);
     }
   });
