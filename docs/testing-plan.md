@@ -1,12 +1,16 @@
 # Testing plan — tiers 0–2
 
-**Status:** working document, 2026-08-04. Temporary. It exists so the tier
-model and the phase breakdown are reviewable in one place; fold it into
+**Status:** working document, last updated 2026-08-05. Temporary. It exists so
+the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
-Measurements were taken on 2026-08-04 against `main` of both repos, except the
-post-exclusion figures in Gates, which were measured on 2026-08-05 against the
-Phase 0 branches (base#5 `1878cca`, server#7 `a1270f6`).
+**Progress: tiers 0 and 1 are complete.** Phases 0, 1 and 1b have landed
+(server#7, server#9, base#5, base#6). Phases 2–4 — tier 2 — remain.
+
+Figures below are measured against `main` of both repos as of 2026-08-05, after
+Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
+it is kept at its 2026-08-04 pre-Phase-0 values on purpose, because the
+reasoning that follows it is about those numbers.
 
 ## Scope boundary
 
@@ -47,17 +51,18 @@ document beyond the open questions at the end.
 
 ### Tier 0 — complete
 
-154 tests, all green: 76 in `truenas-mcp-base` (6 files), 78 in
-`truenas-mcp-server` (7 files). CI runs `typecheck`, `lint`, `test` and
-`build` on Node 22 and 24.
+168 tests, all green: 80 in `truenas-mcp-base` (6 files), 88 in
+`truenas-mcp-server` (7 files). CI runs `typecheck`, `lint`, `test:coverage`
+and `build` on Node 22 and 24, with the coverage gates below blocking.
 
-### Tier 1 — partial
+### Tier 1 — complete
 
-`src/server.spec.ts` (16 tests) drives a real MCP `Client` against a real
-`Server` over `InMemoryTransport`. It already covers both elicitation paths,
-the plan/confirm fallback, audit invariants, and the `requireElicitation`
-default-deny. What is missing is systematic coverage of the client-capability
-matrix rather than individual cells — see Phase 1.
+`src/server.spec.ts` drives a real MCP `Client` against a real `Server` over
+`InMemoryTransport`. Phase 1 completed it: all six cells of
+{elicitation, none} × {`requireElicitation` unset, true, false} have explicit
+named tests for mutating calls, and all six are asserted not to affect
+read-only calls. `tools/list` annotation agreement is checked against every
+default-catalog entry rather than a sample.
 
 ### Tier 2 — absent
 
@@ -150,19 +155,26 @@ denominator):
 
 | Repo | Measured stmt / branch | Floor stmt / branch |
 | --- | --- | --- |
-| `truenas-mcp-base` | 96.25 / 94.09 | 96 / 94 |
-| `truenas-mcp-server` | 94.17 / 88.32 | 94 / 88 |
+| `truenas-mcp-base` | 97.59 / 96.34 | 97 / 96 |
+| `truenas-mcp-server` | 94.17 / 89.61 | 94 / 89 |
 
 Per-file safety floors:
 
-| Repo | File | Measured stmt / branch | Floor stmt / branch | Branch target | Raised by |
-| --- | --- | --- | --- | --- | --- |
-| server | `src/server.ts` | 100.00 / 92.30 | 98 / 92 | 95 | Phase 1 |
-| server | `src/gate.ts` | 100.00 / 92.30 | 98 / 92 | 95 | Phase 1 |
-| base | `src/execution/executor.ts` | 97.75 / 92.06 | 97 / 92 | 95 | Phase 1b |
-| base | `src/registry/system-registry.ts` | 97.77 / 93.22 | 97 / 93 | 95 | Phase 1b |
-| base | `src/execution/confirmation.ts` | 97.14 / 94.11 | 97 / 94 | 95 | Phase 1b |
-| base | `src/catalog/catalog.ts` | 96.77 / 95.00 | 96 / 95 | 95 | already there |
+| Repo | File | Measured stmt / branch | Floor stmt / branch | Landed in |
+| --- | --- | --- | --- | --- |
+| server | `src/server.ts` | 100.00 / 100.00 | 98 / 98 | Phase 1 |
+| server | `src/gate.ts` | 100.00 / 100.00 | 98 / 98 | Phase 1 |
+| base | `src/execution/executor.ts` | 100.00 / 95.23 | 97 / 95 | Phase 1b |
+| base | `src/registry/system-registry.ts` | 100.00 / 96.55 | 97 / 96 | Phase 1b |
+| base | `src/execution/confirmation.ts` | 100.00 / 97.05 | 97 / 97 | Phase 1b |
+| base | `src/catalog/catalog.ts` | 96.77 / 95.00 | 96 / 95 | Phase 0 |
+
+All six now clear the 95 branch target. `catalog.ts` sits at exactly its floor
+and `confirmation.ts` 0.05 above — the correct outcome of flooring at measured
+level, and stable because coverage is deterministic (both repos pass on the
+Node 22 and 24 CI matrix). A vitest or v8 upgrade that shifts branch accounting
+will trip these two first; the fix then is to re-measure and re-floor, never to
+shave the floor down.
 
 **Why both floors.** A branch-only floor cannot detect a file that loses all of
 its tests. v8 records no branches for a file nothing touches and reports it as
@@ -183,9 +195,9 @@ Statements floors are `floor(measured)`, except where a file already measures
 The statements gate is a wholesale-loss backstop, not a full-line-coverage
 mandate, and 98 leaves room for an honestly-excluded defensive line.
 
-**Phase 0 sets these floors at measured level, not at the 95 branch target.**
-Five of the six are below 95 branch today, so landing the target as the
-initial floor would fail CI the day Phase 0 merges — exactly what rule 4
+**Phase 0 set these floors at measured level, not at the 95 branch target.**
+Five of the six were below 95 branch at the time, so landing the target as the
+initial floor would have failed CI the day Phase 0 merged — exactly what rule 4
 forbids. Reaching 95 is real work, and it belongs to a phase that owns it:
 `server.ts` and `gate.ts` are lifted by Phase 1 as a side effect of the matrix,
 and the three base files have no other phase touching them, so they get
@@ -219,17 +231,18 @@ reasoning.
 Each phase is one PR.
 
 ```
-Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)
-          ->  Phase 1b  (base:   raises the floors Phase 0 recorded)
-Phase 2   ->  Phase 3
-          ->  Phase 4
+Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
+          ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
+Phase 2   ->  Phase 3                                                  TODO
+          ->  Phase 4                                                  TODO
 ```
 
-Phase 0 and Phase 2 are independent of each other and of everything else, so
-either can go first. Phases 1 and 1b both need Phase 0 to have recorded the
-floors they raise.
+Phases 0, 1 and 1b have landed — their sections below are kept as the record of
+what was decided and why, since the rationale still governs how the floors are
+maintained. **Phase 2 is the next piece of work**, and Phases 3 and 4 depend on
+it.
 
-### Phase 0 — coverage measurement and gates
+### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
 Two small PRs, one per repo, since the safety-floor files span both.
 
@@ -267,7 +280,7 @@ A per-file threshold key that matches no file **passes vacuously**. Renaming
 any safety-floor file must carry its threshold key along, or the floor silently
 disappears.
 
-### Phase 1 — protocol conformance matrix (tier 1)
+### Phase 1 — protocol conformance matrix (tier 1) *(landed: server#9)*
 
 **Deliverables**
 
@@ -292,7 +305,10 @@ from 92.30 branch to the 95 target (uncovered today: `server.ts` lines 96 and
 132, `gate.ts` line 68). Raise both **branch** floors to 95 in this PR, not in
 Phase 0. Leave the statements floors where Phase 0 set them.
 
-### Phase 1b — raise the base safety files to the 95% branch floor
+**Outcome:** both files reached 100% branch, so the floors landed at 98 rather
+than the 95 minimum — the headroom rule under Gates.
+
+### Phase 1b — raise the base safety files to the 95% branch floor *(landed: base#6)*
 
 Base repo. Independent of Phase 1, which is server-only.
 
@@ -313,13 +329,20 @@ Cover the outstanding branches, then raise each file's **branch** floor to 95
 
 **Acceptance:** all three at or above 95% branch, floors raised in the same PR.
 
+**Outcome:** `executor.ts` 95.23, `system-registry.ts` 96.55,
+`confirmation.ts` 97.05, floored at 95 / 96 / 97 respectively. The judgement
+call below was exercised once: the unreachable `no result for system` guard in
+`executor.ts` was suppressed with a `v8 ignore` block carrying its proof
+(`partitionByRole` assigns every target to exactly one of allowed/denied, and
+`resolve` dedupes names) rather than covered by a contrived test.
+
 **Judgement required:** look at what each uncovered branch actually is before
 writing a test for it. An unreachable defensive branch is better excluded with
 a comment explaining why than covered by a contrived test that exists only to
 move a number. Rule 4's point is that the figure should track real assurance —
 gaming it is worse than leaving the floor where it is and saying so.
 
-### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path
+### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path *(next)*
 
 The only phase that changes production code. Agreed 2026-08-04.
 
