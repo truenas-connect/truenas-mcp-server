@@ -239,7 +239,7 @@ describe('conformance matrix — {elicitation, none} × {requireElicitation unse
     });
 
     it('elicitation client × true: elicitation path unchanged', async () => {
-      const { client, executeSpy } = await setup({
+      const { client, executeSpy, elicitations, mintSpy } = await setup({
         requireElicitation: true,
         onElicit: () => ({ action: 'accept' }),
       });
@@ -247,8 +247,11 @@ describe('conformance matrix — {elicitation, none} × {requireElicitation unse
         name: 'snap_create',
         arguments: { dataset: 'tank/x', systems: 'all' },
       });
+      expect(elicitations).toHaveLength(1);
+      expect(mintSpy).toHaveBeenCalledTimes(1);
       expect(executeSpy).toHaveBeenCalledTimes(2);
       expect((result as CallToolResult).isError).toBeUndefined();
+      expect(text(result)).not.toContain('Confirmation token');
     });
 
     it('elicitation client × false: elicitation still wins over the fallback — no token in the response', async () => {
