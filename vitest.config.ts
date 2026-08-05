@@ -1,5 +1,5 @@
 import { fileURLToPath } from 'node:url';
-import { defineConfig } from 'vitest/config';
+import { coverageConfigDefaults, defineConfig } from 'vitest/config';
 
 const srcDir = fileURLToPath(new URL('./src', import.meta.url));
 
@@ -14,5 +14,42 @@ export default defineConfig({
     environment: 'node',
     globals: true,
     include: ['src/**/*.spec.ts'],
+    coverage: {
+      provider: 'v8',
+      // Narrows the untested-file scan to src. Vitest 3 already pulls
+      // unimported files into the denominator via the coverage.all default;
+      // vitest 4 removes that option and requires an explicit include for a
+      // new src file that no spec imports to keep reporting at 0%.
+      include: ['src/**/*.ts'],
+      exclude: [
+        ...coverageConfigDefaults.exclude,
+        // Re-export barrel; no logic of its own.
+        'src/index.ts',
+        // Subprocess-tested by cli.spec.ts, which spawns `tsx src/cli.ts`;
+        // v8 coverage in the parent process cannot see into the child, so it
+        // reads 0% here despite being tested. Do not "fix" this by deleting
+        // those tests.
+        'src/cli.ts',
+      ],
+      // Floors, not targets: set at the measured level so a decrease fails CI.
+      // Raised by hand in the same PR that raises the coverage — never lowered,
+      // never auto-updated. See docs/testing-plan.md.
+      // Branch is the primary gate; the statements floor exists because v8
+      // reports a file that no test touches as 100% branch (no branches
+      // recorded), so a branch-only floor cannot see a file losing all its
+      // tests at once.
+      thresholds: {
+        branches: 88,
+        statements: 94,
+        // Per-file floors on the files where the safety model lives. A key
+        // that matches no file passes vacuously, so renaming one of these
+        // files must carry its key along or the floor silently disappears. Both
+        // measure 100% statements today, but the statements floor is only the
+        // wholesale-loss backstop, not a full-line-coverage mandate — 98
+        // leaves room for an honestly-excluded defensive line.
+        'src/server.ts': { branches: 92, statements: 98 },
+        'src/gate.ts': { branches: 92, statements: 98 },
+      },
+    },
   },
 });
