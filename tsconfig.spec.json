@@ -4,6 +4,6 @@
     "types": ["node", "vitest/globals"],
     "noEmit": true
   },
-  "include": ["src/**/*.spec.ts"],
+  "include": ["src/**/*.spec.ts", "tests/**/*.spec.ts"],
   "exclude": ["dist", "node_modules"]
 }
