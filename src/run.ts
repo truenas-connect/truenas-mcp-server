@@ -34,12 +34,20 @@ export interface RunServerOptions {
 }
 
 /**
- * Runs the server until the transport closes or a signal arrives. Rejects on
- * startup failure, closing any clients that already connected.
+ * Connects the configured systems and starts serving. The returned promise
+ * settles at the end of *startup*: it resolves once the transport is connected
+ * and the banner printed (the process then stays alive via the open stdio
+ * handles and signal handlers), and rejects on startup failure after closing
+ * any clients that already connected.
  */
 export async function runServer(config: ServerConfig, options: RunServerOptions): Promise<void> {
   // TLS policy must be applied before connecting: clients read the
-  // process-global setting at connect time.
+  // process-global setting at connect time. The restore function
+  // applyTlsPolicy returns is deliberately discarded — safe only because
+  // runServer owns the process for its lifetime. An in-process caller (e.g. a
+  // test) using allowSelfSigned would leak the weakened process-global TLS
+  // setting to everything after it; such callers must isolate the process, as
+  // the subprocess-based tier-2 fixture does.
   if (config.allowSelfSigned === true) {
     applyTlsPolicy(config);
     console.error(
