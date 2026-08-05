@@ -237,10 +237,10 @@ Phase 2   ->  Phase 3                                                  TODO
           ->  Phase 4                                                  TODO
 ```
 
-Phases 0, 1 and 1b have landed — their sections below are kept as the record of
-what was decided and why, since the rationale still governs how the floors are
-maintained. **Phase 2 is the next piece of work**, and Phases 3 and 4 depend on
-it.
+Phases 0, 1, 1b and 2 have landed — their sections below are kept as the record
+of what was decided and why, since the rationale still governs how the floors
+are maintained. **Phase 3 is the next piece of work**; Phase 4 is independent of
+it and can go in either order now that Phase 2 has landed.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -342,7 +342,7 @@ a comment explaining why than covered by a contrived test that exists only to
 move a number. Rule 4's point is that the figure should track real assurance —
 gaming it is worse than leaving the floor where it is and saying so.
 
-### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path *(next)*
+### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path *(landed)*
 
 The only phase that changes production code. Agreed 2026-08-04.
 
@@ -416,6 +416,27 @@ that a connect failure closes the clients that did connect.
 **Explicitly rejected:** a `TRUENAS_MCP_CLIENT_FACTORY` environment variable.
 It is easier, but it is a production surface that lets anyone with environment
 control swap out the connection layer. Not worth it for test convenience.
+
+**Outcome.** `src/runner.ts` exports `runServer`; `cli.ts` drops from 195 to
+100 lines and keeps only argument parsing and config loading.
+
+Two seams beyond `clientFactory` proved necessary, both defaulted so the binary
+is unaffected: `transport` (a test driving the real `StdioServerTransport`
+would seize the process's stdout, which is the MCP channel) and `exit` (it
+would end the test run). They are the only two branches in the file coverage
+never sees; the binary takes both on every real start and tier 2's subprocess
+tests exercise them there.
+
+The extraction moved code *out of* an excluded file (`cli.ts`) *into* a
+measured one, which would have dropped the global statements figure through its
+floor. Rather than excluding `runner.ts` too — growing the unmeasured surface
+at the exact moment the seam made it unnecessary — the phase added 13
+in-process tests. The global figures went **up**: 94.17 / 89.61 → 95.93 / 90.24,
+floors raised to 95 / 90 accordingly.
+
+`runner.ts` also gains a per-file floor. It is not one of the original six
+safety files, but it is where `requireElicitation` is threaded from config into
+the server, so a silent regression there disables the default-deny.
 
 ### Phase 3 — built-artifact smoke (tier 2a)
 

@@ -7,6 +7,8 @@
 
 export { createServer } from '@/server';
 export type { ServerDeps } from '@/server';
+export { runServer } from '@/runner';
+export type { RunServerOptions, RunningServer } from '@/runner';
 export { ElicitationGate, renderPlan } from '@/gate';
 export {
   applyTlsPolicy,

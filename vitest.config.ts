@@ -39,8 +39,8 @@ export default defineConfig({
       // recorded), so a branch-only floor cannot see a file losing all its
       // tests at once.
       thresholds: {
-        branches: 89,
-        statements: 94,
+        branches: 90,
+        statements: 95,
         // Per-file floors on the files where the safety model lives. A key
         // that matches no file passes vacuously, so renaming one of these
         // files must carry its key along or the floor silently disappears. Both
@@ -49,6 +49,11 @@ export default defineConfig({
         // leaves room for an honestly-excluded defensive line.
         'src/server.ts': { branches: 98, statements: 98 },
         'src/gate.ts': { branches: 98, statements: 98 },
+        // runner.ts is where requireElicitation is threaded from config into
+        // the server, so a silent regression here disables the default-deny.
+        // Its branch floor is 85 rather than higher because the two `??`
+        // process-global defaults are deliberately unexercised in-process.
+        'src/runner.ts': { branches: 85, statements: 98 },
       },
     },
   },
