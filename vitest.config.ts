@@ -30,6 +30,12 @@ export default defineConfig({
         // reads 0% here despite being tested. Do not "fix" this by deleting
         // those tests.
         'src/cli.ts',
+        // Same situation as cli.ts: process wiring (stdio transport, signal
+        // handlers, process.exit) exercised through subprocesses — startup
+        // failures via cli.spec.ts today, the full session via the tier-2
+        // stdio fixture (testing-plan Phase 4). Coverage is sourced from
+        // tiers 0-1 only (plan rule 2).
+        'src/run.ts',
       ],
       // Floors, not targets: set at the measured level so a decrease fails CI.
       // Raised by hand in the same PR that raises the coverage — never lowered,
