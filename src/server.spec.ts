@@ -33,6 +33,11 @@ interface SetupOptions {
   requireElicitation?: boolean;
 }
 
+async function connectPair(server: Server, client: Client): Promise<void> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+}
+
 async function setup(options: SetupOptions = {}) {
   const registry = new SystemRegistry();
   for (const name of ['a', 'b']) {
@@ -119,8 +124,7 @@ async function setup(options: SetupOptions = {}) {
     });
   }
 
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  await connectPair(server, client);
   return { client, executeSpy, elicitations, auditEvents, mintSpy };
 }
 
@@ -161,8 +165,7 @@ describe('tools/list', () => {
       confirmations: new ConfirmationService(),
     });
     const client = new Client({ name: 'test-client', version: '0.0.0' }, {});
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    await connectPair(server, client);
 
     const advertised = catalog.list(Role.Full);
     expect(advertised.length).toBeGreaterThan(0);
@@ -249,7 +252,7 @@ describe('conformance matrix — {elicitation, none} × {requireElicitation unse
     });
 
     it('elicitation client × false: elicitation still wins over the fallback — no token in the response', async () => {
-      const { client, executeSpy, elicitations } = await setup({
+      const { client, executeSpy, elicitations, mintSpy } = await setup({
         requireElicitation: false,
         onElicit: () => ({ action: 'accept' }),
       });
@@ -260,6 +263,9 @@ describe('conformance matrix — {elicitation, none} × {requireElicitation unse
       expect(elicitations).toHaveLength(1);
       expect(executeSpy).toHaveBeenCalledTimes(2);
       expect((result as CallToolResult).isError).toBeUndefined();
+      // A token IS minted — on the server side, after the user accepted — it
+      // just never reaches the LLM's context.
+      expect(mintSpy).toHaveBeenCalledTimes(1);
       expect(text(result)).not.toContain('Confirmation token');
     });
 
@@ -418,8 +424,7 @@ describe('tools/call — internal invariants', () => {
       { capabilities: { elicitation: {} } },
     );
     client.setRequestHandler(ElicitRequestSchema, () => ({ action: 'accept' }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    await connectPair(server, client);
 
     const result = await client.callTool({ name: 'snap_create', arguments: {} });
     expect((result as CallToolResult).isError).toBe(true);
@@ -436,8 +441,7 @@ describe('tools/call — internal invariants', () => {
       confirmations: new ConfirmationService(),
     });
     const client = new Client({ name: 'test-client', version: '0.0.0' }, {});
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    await connectPair(server, client);
 
     const result = await client.callTool({ name: 'anything', arguments: {} });
     expect((result as CallToolResult).isError).toBe(true);
