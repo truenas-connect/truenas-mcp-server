@@ -5,7 +5,8 @@ the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
 **Progress: tiers 0 and 1 are complete.** Phases 0, 1 and 1b have landed
-(server#7, server#9, base#5, base#6). Phases 2–4 — tier 2 — remain.
+(server#7, server#9, base#5, base#6), as has Phase 2 (server#11). Phases 3
+and 4 — the tier 2 suites — remain.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -237,10 +238,11 @@ Phase 2   ->  Phase 3                                                  TODO
           ->  Phase 4                                                  TODO
 ```
 
-Phases 0, 1 and 1b have landed — their sections below are kept as the record of
-what was decided and why, since the rationale still governs how the floors are
-maintained. **Phase 2 is the next piece of work**, and Phases 3 and 4 depend on
-it.
+Phases 0, 1, 1b and 2 have landed — their sections below are kept as the
+record of what was decided and why, since the rationale still governs how the
+floors are maintained. **Phases 3 and 4 are the next pieces of work**; both
+are unblocked now that Phase 2's `runServer` seam exists, and they are
+independent of each other.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -342,7 +344,7 @@ a comment explaining why than covered by a contrived test that exists only to
 move a number. Rule 4's point is that the figure should track real assurance —
 gaming it is worse than leaving the floor where it is and saying so.
 
-### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path *(next)*
+### Phase 2 — mirror the `init.ts` client-factory seam onto the serve path *(landed: server#11)*
 
 The only phase that changes production code. Agreed 2026-08-04.
 
