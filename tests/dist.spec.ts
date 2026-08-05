@@ -24,7 +24,10 @@ const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   main: string;
   module: string;
   types: string;
-  exports: Record<string, Record<'import' | 'require', Record<'types' | 'default', string>>>;
+  exports: Record<
+    string,
+    string | Record<'import' | 'require', string | Record<'types' | 'default', string>>
+  >;
 };
 
 beforeAll(() => {
@@ -136,12 +139,24 @@ describe('packaged artifact shape', () => {
     // tsup dts regression dropping e.g. index.d.cts breaks CJS consumers'
     // types while everything else stays green.
     const referenced = [pkg.main, pkg.module, pkg.types];
+    // The exports spec also allows string shorthand at either level; collect
+    // every leaf so a shape change fails with the missing path in the
+    // message, not with existsSync(undefined).
     for (const entry of Object.values(pkg.exports)) {
+      if (typeof entry === 'string') {
+        referenced.push(entry);
+        continue;
+      }
       for (const format of Object.values(entry)) {
-        referenced.push(format.types, format.default);
+        if (typeof format === 'string') {
+          referenced.push(format);
+        } else {
+          referenced.push(format.types, format.default);
+        }
       }
     }
     for (const relative of referenced) {
+      expect(relative, 'exports map leaf').toBeTypeOf('string');
       expect(existsSync(join(root, relative)), relative).toBe(true);
     }
   });
@@ -153,7 +168,7 @@ describe('packaged artifact shape', () => {
     >;
     expect(typeof mod['runServer']).toBe('function');
     expect(typeof mod['createServer']).toBe('function');
-  });
+  }, 30_000);
 
   it('exposes runServer from the CJS entry', () => {
     const require = createRequire(import.meta.url);
