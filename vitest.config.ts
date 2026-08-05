@@ -16,8 +16,10 @@ export default defineConfig({
     include: ['src/**/*.spec.ts'],
     coverage: {
       provider: 'v8',
-      // Explicit include so a new src file that no spec imports still enters
-      // the denominator at 0% instead of being invisible to the floors.
+      // Narrows the untested-file scan to src. Vitest 3 already pulls
+      // unimported files into the denominator via the coverage.all default;
+      // vitest 4 removes that option and requires an explicit include for a
+      // new src file that no spec imports to keep reporting at 0%.
       include: ['src/**/*.ts'],
       exclude: [
         ...coverageConfigDefaults.exclude,
@@ -39,7 +41,9 @@ export default defineConfig({
       thresholds: {
         branches: 88,
         statements: 94,
-        // Per-file floors on the files where the safety model lives. Both
+        // Per-file floors on the files where the safety model lives. A key
+        // that matches no file passes vacuously, so renaming one of these
+        // files must carry its key along or the floor silently disappears. Both
         // measure 100% statements today, but the statements floor is only the
         // wholesale-loss backstop, not a full-line-coverage mandate — 98
         // leaves room for an honestly-excluded defensive line.
