@@ -4,7 +4,9 @@
 model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
-All measurements below were taken on 2026-08-04 against `main` of both repos.
+Measurements were taken on 2026-08-04 against `main` of both repos, except the
+post-exclusion figures in Gates, which were measured on 2026-08-05 against the
+Phase 0 branches (base#5 `1878cca`, server#7 `a1270f6`).
 
 ## Scope boundary
 
@@ -118,9 +120,13 @@ at roughly 93–100% statements and 92–96% branch on real logic.
    and Phases 3 and 4 add more subprocess tests, so this compounds rather than
    resolving itself.
 
-3. **Branch, not line.** This codebase is full of fail-closed logic
-   (`requireElicitation !== false`, the role gate, token validation). Line
-   coverage flatters it, because the dangerous path is the one not taken.
+3. **Branch is the primary gate; statements is the backstop.** This codebase is
+   full of fail-closed logic (`requireElicitation !== false`, the role gate,
+   token validation), and line coverage flatters it because the dangerous path
+   is the one not taken. But a branch floor *alone* cannot see a file that
+   loses all of its tests: v8 records no branches for an untouched file and
+   reports it as 100% branch. Every gate therefore carries both floors — see
+   Gates for the demonstration.
 
 4. **Floors are set at measured level and raised deliberately, never set
    aspirationally.** A gate that fails on the day it lands gets bypassed and
@@ -132,27 +138,58 @@ at roughly 93–100% statements and 92–96% branch on real logic.
 
 ### Gates
 
-Two, both blocking:
+Two, both blocking, and each carrying **a branch floor and a statements floor**:
 
-- **Global floor** — global branch percentage may not decrease.
-- **Safety floor** — a per-file branch threshold on the files where the safety
-  model lives.
+- **Global floor** — the repo-wide figures may not decrease.
+- **Safety floor** — per-file thresholds on the files where the safety model
+  lives.
 
-| Repo | File | Branch today | Floor at Phase 0 | Target | Raised by |
+Global floors, set at the measured **post-exclusion** figures (which differ
+from the raw numbers in the table above, since the exclusions change the
+denominator):
+
+| Repo | Measured stmt / branch | Floor stmt / branch |
+| --- | --- | --- |
+| `truenas-mcp-base` | 96.25 / 94.09 | 96 / 94 |
+| `truenas-mcp-server` | 94.17 / 88.32 | 94 / 88 |
+
+Per-file safety floors:
+
+| Repo | File | Measured stmt / branch | Floor stmt / branch | Branch target | Raised by |
 | --- | --- | --- | --- | --- | --- |
-| server | `src/server.ts` | 92.30 | 92 | 95 | Phase 1 |
-| server | `src/gate.ts` | 92.30 | 92 | 95 | Phase 1 |
-| base | `src/execution/executor.ts` | 92.06 | 92 | 95 | Phase 1b |
-| base | `src/registry/system-registry.ts` | 93.22 | 93 | 95 | Phase 1b |
-| base | `src/execution/confirmation.ts` | 94.11 | 94 | 95 | Phase 1b |
-| base | `src/catalog/catalog.ts` | 95.00 | 95 | 95 | already there |
+| server | `src/server.ts` | 100.00 / 92.30 | 98 / 92 | 95 | Phase 1 |
+| server | `src/gate.ts` | 100.00 / 92.30 | 98 / 92 | 95 | Phase 1 |
+| base | `src/execution/executor.ts` | 97.75 / 92.06 | 97 / 92 | 95 | Phase 1b |
+| base | `src/registry/system-registry.ts` | 97.77 / 93.22 | 97 / 93 | 95 | Phase 1b |
+| base | `src/execution/confirmation.ts` | 97.14 / 94.11 | 97 / 94 | 95 | Phase 1b |
+| base | `src/catalog/catalog.ts` | 96.77 / 95.00 | 96 / 95 | 95 | already there |
 
-**Phase 0 sets these floors at measured level, not at the 95 target.** Five of
-the six are below 95 today, so landing the target as the initial floor would
-fail CI the day Phase 0 merges — exactly what rule 4 forbids. Reaching 95 is
-real work, and it belongs to a phase that owns it: `server.ts` and `gate.ts`
-are lifted by Phase 1 as a side effect of the matrix, and the three base files
-have no other phase touching them, so they get Phase 1b.
+**Why both floors.** A branch-only floor cannot detect a file that loses all of
+its tests. v8 records no branches for a file nothing touches and reports it as
+100% branch, which passes any branch floor. Demonstrated on the Phase 0
+branches by deleting one spec and re-running:
+
+```
+executor.ts   0% stmt | 100% branch   (base, with executor.spec.ts removed)
+gate.ts       0% stmt | 100% branch   (server, with server.spec.ts removed)
+```
+
+Both sail past their 92 branch floors; only the statements floor fails the
+build. The same trap exists one level up — base's *global* branch figure rose
+to 95.42 while the code under test shrank.
+
+Statements floors are `floor(measured)`, except where a file already measures
+100%: `server.ts` and `gate.ts` are floored at 98 rather than 100, deliberately.
+The statements gate is a wholesale-loss backstop, not a full-line-coverage
+mandate, and 98 leaves room for an honestly-excluded defensive line.
+
+**Phase 0 sets these floors at measured level, not at the 95 branch target.**
+Five of the six are below 95 branch today, so landing the target as the
+initial floor would fail CI the day Phase 0 merges — exactly what rule 4
+forbids. Reaching 95 is real work, and it belongs to a phase that owns it:
+`server.ts` and `gate.ts` are lifted by Phase 1 as a side effect of the matrix,
+and the three base files have no other phase touching them, so they get
+Phase 1b.
 
 **On the word "ratchet".** Vitest's `thresholds` are floors, not ratchets: a
 number fails on decrease but never raises itself. `coverage.thresholds
@@ -197,10 +234,15 @@ Two small PRs, one per repo, since the safety-floor files span both.
   and `src/catalog/tool.ts` (base); `src/index.ts` and `src/cli.ts` (server).
   `cli.ts`'s exclusion comment must say it is subprocess-tested by
   `cli.spec.ts`, so a future reader does not "fix" it by deleting those tests.
-- Global branch threshold set to the measured post-exclusion figure.
-- Per-file branch thresholds on the safety-floor files, each set at its
-  **measured level** per the Gates table — not at the 95 target. Phase 0 must
-  land green.
+- Global branch **and statements** thresholds set to the measured
+  post-exclusion figures.
+- Per-file branch and statements thresholds on the safety-floor files, each set
+  at its **measured level** per the Gates table — not at the 95 branch target.
+  Phase 0 must land green.
+- `coverage.include` scoped to `src/**/*.ts`. Vitest 3 pulls unimported files
+  into the denominator via the `coverage.all` default, but vitest 4 drops that
+  option, and without an explicit include a new source file that no spec
+  imports would stop being reported at 0%.
 - CI calls the existing `test:coverage` script instead of `test`. The script
   and `@vitest/coverage-v8` are already present in both repos, so this is a
   CI-wiring change plus the config block — nothing new to install.
@@ -211,8 +253,13 @@ it already measures 100% statements and 100% branch and needs no special
 handling.
 
 **Acceptance:** CI is green on landing, and fails when any safety-floor file
-drops below its recorded floor or when the global branch figure decreases.
-Both verified by temporarily deleting a test locally.
+drops below its recorded floor or when a global figure decreases. Both verified
+by temporarily deleting a test locally — and the failure must name the file, not
+just report a global miss.
+
+A per-file threshold key that matches no file **passes vacuously**. Renaming
+any safety-floor file must carry its threshold key along, or the floor silently
+disappears.
 
 ### Phase 1 — protocol conformance matrix (tier 1)
 
@@ -236,7 +283,8 @@ duplicating — check existing test names before adding.
 
 **Coverage side effect:** this phase is what lifts `server.ts` and `gate.ts`
 from 92.30 branch to the 95 target (uncovered today: `server.ts` lines 96 and
-132, `gate.ts` line 68). Raise both floors to 95 in this PR, not in Phase 0.
+132, `gate.ts` line 68). Raise both **branch** floors to 95 in this PR, not in
+Phase 0. Leave the statements floors where Phase 0 set them.
 
 ### Phase 1b — raise the base safety files to the 95% branch floor
 
@@ -248,7 +296,8 @@ them. Without this phase the target is aspirational, which rule 4 forbids.
 
 **Deliverables**
 
-Cover the outstanding branches, then raise each file's floor to 95:
+Cover the outstanding branches, then raise each file's **branch** floor to 95
+(leaving its statements floor as Phase 0 set it):
 
 | File | Uncovered today |
 | --- | --- |
