@@ -39,7 +39,7 @@ export default defineConfig({
       // recorded), so a branch-only floor cannot see a file losing all its
       // tests at once.
       thresholds: {
-        branches: 88,
+        branches: 89,
         statements: 94,
         // Per-file floors on the files where the safety model lives. A key
         // that matches no file passes vacuously, so renaming one of these
@@ -47,8 +47,8 @@ export default defineConfig({
         // measure 100% statements today, but the statements floor is only the
         // wholesale-loss backstop, not a full-line-coverage mandate — 98
         // leaves room for an honestly-excluded defensive line.
-        'src/server.ts': { branches: 92, statements: 98 },
-        'src/gate.ts': { branches: 92, statements: 98 },
+        'src/server.ts': { branches: 98, statements: 98 },
+        'src/gate.ts': { branches: 98, statements: 98 },
       },
     },
   },

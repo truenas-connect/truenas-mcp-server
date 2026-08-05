@@ -1,5 +1,6 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import {
   ElicitRequestSchema,
   type CallToolResult,
@@ -8,6 +9,7 @@ import {
 import type { TrueNasApiClient } from '@truenas/api-client';
 import {
   ConfirmationService,
+  createDefaultCatalog,
   Role,
   SystemRegistry,
   ToolCatalog,
@@ -19,6 +21,7 @@ import {
   type SystemResult,
 } from '@truenas/mcp-base';
 import { describe, expect, it, vi } from 'vitest';
+import { ElicitationGate } from '@/gate';
 import { createServer } from '@/server';
 
 interface SetupOptions {
@@ -28,6 +31,11 @@ interface SetupOptions {
   planFailsOn?: string[];
   elicitationTimeoutMs?: number;
   requireElicitation?: boolean;
+}
+
+async function connectPair(server: Server, client: Client): Promise<void> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
 }
 
 async function setup(options: SetupOptions = {}) {
@@ -79,6 +87,7 @@ async function setup(options: SetupOptions = {}) {
   catalog.register(mutatingTool);
   catalog.register(readTool);
   const confirmations = new ConfirmationService();
+  const mintSpy = vi.spyOn(confirmations, 'mint');
   const auditEvents: AuditEvent[] = [];
   const executor = new ToolExecutor({
     catalog,
@@ -115,9 +124,8 @@ async function setup(options: SetupOptions = {}) {
     });
   }
 
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
-  return { client, executeSpy, elicitations, auditEvents };
+  await connectPair(server, client);
+  return { client, executeSpy, elicitations, auditEvents, mintSpy };
 }
 
 function text(result: unknown): string {
@@ -148,6 +156,39 @@ describe('tools/list', () => {
     expect(pool?.inputSchema['properties']).not.toHaveProperty('confirmation_token');
     expect(pool?.annotations).toMatchObject({ readOnlyHint: true });
   });
+
+  it('keeps annotations agreeing with `mutating` for every default-catalog entry', async () => {
+    const catalog = createDefaultCatalog();
+    const server = createServer({
+      catalog,
+      executor: { execute: vi.fn() } as unknown as ToolExecutor,
+      confirmations: new ConfirmationService(),
+    });
+    const client = new Client({ name: 'test-client', version: '0.0.0' }, {});
+    await connectPair(server, client);
+
+    const advertised = catalog.list(Role.Full);
+    expect(advertised.length).toBeGreaterThan(0);
+    const { tools } = await client.listTools();
+    expect(tools.map((tool) => tool.name).sort()).toEqual(
+      advertised.map((tool) => tool.name).sort(),
+    );
+    for (const entry of advertised) {
+      const tool = tools.find((candidate) => candidate.name === entry.name);
+      expect(tool?.annotations, entry.name).toEqual({
+        readOnlyHint: !entry.mutating,
+        destructiveHint: entry.mutating,
+      });
+      expect(tool?.inputSchema['properties'], entry.name).toHaveProperty('systems');
+      if (entry.mutating) {
+        expect(tool?.inputSchema['properties'], entry.name).toHaveProperty('confirmation_token');
+      } else {
+        expect(tool?.inputSchema['properties'], entry.name).not.toHaveProperty(
+          'confirmation_token',
+        );
+      }
+    }
+  });
 });
 
 describe('tools/call — read-only', () => {
@@ -166,26 +207,158 @@ describe('tools/call — read-only', () => {
     expect((result as CallToolResult).isError).toBe(true);
     expect(text(result)).toMatch(/Unknown tool "no_such_tool"/);
   });
+
+  it('treats an omitted "arguments" object as empty (registry then demands a selector)', async () => {
+    const { client } = await setup();
+    const result = await client.callTool({ name: 'pool_status' });
+    expect((result as CallToolResult).isError).toBe(true);
+    expect(text(result)).toMatch(/Multiple systems are registered/);
+  });
+});
+
+describe('conformance matrix — {elicitation, none} × {requireElicitation unset, true, false}', () => {
+  // Every cell of the matrix has an explicit test here (testing-plan Phase 1).
+  // Path details beyond the cell's core behavior (decline, timeout, partial
+  // planning, audit, drift) live in the per-path describes below.
+  describe('mutating calls', () => {
+    it('elicitation client × unset: approved in the host UI, executed within one call', async () => {
+      const { client, executeSpy, elicitations } = await setup({
+        onElicit: () => ({ action: 'accept' }),
+      });
+      const result = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all' },
+      });
+      expect(elicitations).toHaveLength(1);
+      expect(elicitations[0]).toContain('snapshot on a');
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+      expect(parseResults(text(result))).toEqual([
+        { system: 'a', status: 'SUCCESS', value: { created: 'a-snap' } },
+        { system: 'b', status: 'SUCCESS', value: { created: 'b-snap' } },
+      ]);
+    });
+
+    it('elicitation client × true: elicitation path unchanged', async () => {
+      const { client, executeSpy, elicitations, mintSpy } = await setup({
+        requireElicitation: true,
+        onElicit: () => ({ action: 'accept' }),
+      });
+      const result = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all' },
+      });
+      expect(elicitations).toHaveLength(1);
+      expect(mintSpy).toHaveBeenCalledTimes(1);
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+      expect((result as CallToolResult).isError).toBeUndefined();
+      expect(text(result)).not.toContain('Confirmation token');
+    });
+
+    it('elicitation client × false: elicitation still wins over the fallback — no token in the response', async () => {
+      const { client, executeSpy, elicitations, mintSpy } = await setup({
+        requireElicitation: false,
+        onElicit: () => ({ action: 'accept' }),
+      });
+      const result = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all' },
+      });
+      expect(elicitations).toHaveLength(1);
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+      expect((result as CallToolResult).isError).toBeUndefined();
+      // A token IS minted — on the server side, after the user accepted — it
+      // just never reaches the LLM's context.
+      expect(mintSpy).toHaveBeenCalledTimes(1);
+      expect(text(result)).not.toContain('Confirmation token');
+    });
+
+    it('no-elicitation client × unset: refused — no token minted, nothing executed', async () => {
+      // The default is the safety-relevant half of this option: an operator who
+      // never read the config docs must still get the refusal, not the fallback.
+      const { client, executeSpy, auditEvents, mintSpy } = await setup();
+      const result = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all' },
+      });
+      expect((result as CallToolResult).isError).toBe(true);
+      const body = text(result);
+      expect(body).toContain('does not support elicitation');
+      expect(body).not.toContain('Confirmation token');
+      expect(mintSpy).not.toHaveBeenCalled();
+      expect(executeSpy).not.toHaveBeenCalled();
+      expect(auditEvents.map((event) => event.phase)).toEqual(['plan']);
+    });
+
+    it('no-elicitation client × true: refused — no token minted, nothing executed', async () => {
+      const { client, executeSpy, auditEvents, mintSpy } = await setup({
+        requireElicitation: true,
+      });
+      const result = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all' },
+      });
+      expect((result as CallToolResult).isError).toBe(true);
+      const body = text(result);
+      expect(body).toContain('does not support elicitation');
+      expect(body).not.toContain('Confirmation token');
+      expect(mintSpy).not.toHaveBeenCalled();
+      expect(executeSpy).not.toHaveBeenCalled();
+      // The refusal happens after planning (that is how mutating calls are
+      // detected), but nothing must reach the execute phase.
+      expect(auditEvents.map((event) => event.phase)).toEqual(['plan']);
+    });
+
+    it('no-elicitation client × false: plan+token fallback, executes only on the confirmed call', async () => {
+      const { client, executeSpy } = await setup({ requireElicitation: false });
+      const planResult = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all' },
+      });
+      const body = text(planResult);
+      expect(executeSpy).not.toHaveBeenCalled();
+      expect(body).toContain('This is a plan — nothing has been executed.');
+      expect(body).toContain('snapshot on a');
+
+      const token = /Confirmation token \(single-use, expires\): (\S+)/.exec(body)?.[1];
+      expect(token).toBeTruthy();
+
+      const confirmed = await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all', confirmation_token: token },
+      });
+      expect(executeSpy).toHaveBeenCalledTimes(2);
+      expect(parseResults(text(confirmed))).toEqual([
+        { system: 'a', status: 'SUCCESS', value: { created: 'a-snap' } },
+        { system: 'b', status: 'SUCCESS', value: { created: 'b-snap' } },
+      ]);
+    });
+  });
+
+  describe('read-only calls unaffected in every cell', () => {
+    const accept = (): ElicitResult => ({ action: 'accept' });
+    const cells: [string, SetupOptions][] = [
+      ['elicitation client × unset', { onElicit: accept }],
+      ['elicitation client × true', { onElicit: accept, requireElicitation: true }],
+      ['elicitation client × false', { onElicit: accept, requireElicitation: false }],
+      ['no-elicitation client × unset', {}],
+      ['no-elicitation client × true', { requireElicitation: true }],
+      ['no-elicitation client × false', { requireElicitation: false }],
+    ];
+    it.each(cells)('%s', async (_cell, options) => {
+      const { client, elicitations, mintSpy } = await setup(options);
+      const result = await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } });
+      expect((result as CallToolResult).isError).toBeUndefined();
+      expect(parseResults(text(result))).toEqual([
+        { system: 'a', status: 'SUCCESS', value: 'a-healthy' },
+        { system: 'b', status: 'SUCCESS', value: 'b-healthy' },
+      ]);
+      expect(elicitations).toHaveLength(0);
+      expect(mintSpy).not.toHaveBeenCalled();
+    });
+  });
 });
 
 describe('tools/call — mutating, elicitation path', () => {
-  it('executes after the user accepts, within one call', async () => {
-    const { client, executeSpy, elicitations } = await setup({
-      onElicit: () => ({ action: 'accept' }),
-    });
-    const result = await client.callTool({
-      name: 'snap_create',
-      arguments: { dataset: 'tank/x', systems: 'all' },
-    });
-    expect(elicitations).toHaveLength(1);
-    expect(elicitations[0]).toContain('snapshot on a');
-    expect(executeSpy).toHaveBeenCalledTimes(2);
-    expect(parseResults(text(result))).toEqual([
-      { system: 'a', status: 'SUCCESS', value: { created: 'a-snap' } },
-      { system: 'b', status: 'SUCCESS', value: { created: 'b-snap' } },
-    ]);
-  });
-
   it('executes nothing when the user declines', async () => {
     const { client, executeSpy } = await setup({ onElicit: () => ({ action: 'decline' }) });
     const result = await client.callTool({
@@ -228,60 +401,6 @@ describe('tools/call — mutating, elicitation path', () => {
   });
 });
 
-describe('tools/call — requireElicitation', () => {
-  it('defaults to refusing when the option is left unset', async () => {
-    // The default is the safety-relevant half of this option: an operator who
-    // never read the config docs must still get the refusal, not the fallback.
-    const { client, executeSpy, auditEvents } = await setup();
-    const result = await client.callTool({
-      name: 'snap_create',
-      arguments: { dataset: 'tank/x', systems: 'all' },
-    });
-    expect((result as CallToolResult).isError).toBe(true);
-    const body = text(result);
-    expect(body).toContain('does not support elicitation');
-    expect(body).not.toContain('Confirmation token');
-    expect(executeSpy).not.toHaveBeenCalled();
-    expect(auditEvents.map((event) => event.phase)).toEqual(['plan']);
-  });
-
-  it('refuses mutating calls from a client without elicitation, minting no token', async () => {
-    const { client, executeSpy, auditEvents } = await setup({ requireElicitation: true });
-    const result = await client.callTool({
-      name: 'snap_create',
-      arguments: { dataset: 'tank/x', systems: 'all' },
-    });
-    expect((result as CallToolResult).isError).toBe(true);
-    const body = text(result);
-    expect(body).toContain('does not support elicitation');
-    expect(body).not.toContain('Confirmation token');
-    expect(executeSpy).not.toHaveBeenCalled();
-    // The refusal happens after planning (that is how mutating calls are
-    // detected), but nothing must reach the execute phase.
-    expect(auditEvents.map((event) => event.phase)).toEqual(['plan']);
-  });
-
-  it('leaves read-only calls untouched for a client without elicitation', async () => {
-    const { client } = await setup({ requireElicitation: true });
-    const result = await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } });
-    expect((result as CallToolResult).isError).toBeUndefined();
-    expect(parseResults(text(result))).toHaveLength(2);
-  });
-
-  it('leaves the elicitation path untouched', async () => {
-    const { client, executeSpy } = await setup({
-      requireElicitation: true,
-      onElicit: () => ({ action: 'accept' }),
-    });
-    const result = await client.callTool({
-      name: 'snap_create',
-      arguments: { dataset: 'tank/x', systems: 'all' },
-    });
-    expect(executeSpy).toHaveBeenCalledTimes(2);
-    expect((result as CallToolResult).isError).toBeUndefined();
-  });
-});
-
 describe('tools/call — internal invariants', () => {
   it('surfaces an internal error when a confirmed call yields another plan', async () => {
     // A hand-rolled executor that (impossibly, per the core contract) returns
@@ -308,41 +427,59 @@ describe('tools/call — internal invariants', () => {
       { capabilities: { elicitation: {} } },
     );
     client.setRequestHandler(ElicitRequestSchema, () => ({ action: 'accept' }));
-    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+    await connectPair(server, client);
 
     const result = await client.callTool({ name: 'snap_create', arguments: {} });
     expect((result as CallToolResult).isError).toBe(true);
     expect(text(result)).toContain('confirmed call returned another plan');
   });
+
+  it('stringifies a non-Error throw into the error result', async () => {
+    const executor = {
+      execute: vi.fn().mockRejectedValue('exploded without an Error'),
+    } as unknown as ToolExecutor;
+    const server = createServer({
+      catalog: new ToolCatalog(),
+      executor,
+      confirmations: new ConfirmationService(),
+    });
+    const client = new Client({ name: 'test-client', version: '0.0.0' }, {});
+    await connectPair(server, client);
+
+    const result = await client.callTool({ name: 'anything', arguments: {} });
+    expect((result as CallToolResult).isError).toBe(true);
+    expect(text(result)).toBe('exploded without an Error');
+  });
+});
+
+describe('ElicitationGate', () => {
+  it('fails closed when elicitInput rejects with a non-Error', async () => {
+    // Over a real transport the SDK wraps every failure in McpError, so a
+    // non-Error rejection can only be exercised at the Server seam directly.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const confirmations = new ConfirmationService();
+      const mintSpy = vi.spyOn(confirmations, 'mint');
+      const gate = new ElicitationGate(
+        { elicitInput: () => Promise.reject('transport torn down') } as unknown as Server,
+        confirmations,
+      );
+      const token = await gate.requestApproval(
+        { tool: 'snap_create', args: {}, systems: ['a'], steps: [] },
+        'key',
+      );
+      expect(token).toBeNull();
+      expect(mintSpy).not.toHaveBeenCalled();
+      expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('transport torn down'));
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
 });
 
 describe('tools/call — mutating, fallback path (opted in with requireElicitation: false)', () => {
-  it('returns the plan and a token, then executes on the confirmed call', async () => {
-    const { client, executeSpy } = await setup({ requireElicitation: false });
-    const planResult = await client.callTool({
-      name: 'snap_create',
-      arguments: { dataset: 'tank/x', systems: 'all' },
-    });
-    const body = text(planResult);
-    expect(executeSpy).not.toHaveBeenCalled();
-    expect(body).toContain('This is a plan — nothing has been executed.');
-    expect(body).toContain('snapshot on a');
-
-    const token = /Confirmation token \(single-use, expires\): (\S+)/.exec(body)?.[1];
-    expect(token).toBeTruthy();
-
-    const confirmed = await client.callTool({
-      name: 'snap_create',
-      arguments: { dataset: 'tank/x', systems: 'all', confirmation_token: token },
-    });
-    expect(executeSpy).toHaveBeenCalledTimes(2);
-    expect(parseResults(text(confirmed))).toEqual([
-      { system: 'a', status: 'SUCCESS', value: { created: 'a-snap' } },
-      { system: 'b', status: 'SUCCESS', value: { created: 'b-snap' } },
-    ]);
-  });
-
+  // The basic plan-then-confirm round-trip is the {no-elicitation × false}
+  // matrix cell above; these cover the fallback path's details.
   it('partial planning failure: instructs narrowing systems, and the narrowed confirm works', async () => {
     const { client, executeSpy } = await setup({ planFailsOn: ['b'], requireElicitation: false });
     const planResult = await client.callTool({
