@@ -6,28 +6,9 @@
  */
 
 import { parseArgs } from 'node:util';
-import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
-import {
-  ConfirmationService,
-  SystemRegistry,
-  ToolExecutor,
-  connectSystems,
-  createDefaultCatalog,
-} from '@truenas/mcp-base';
-import { createAuditSink } from '@/audit';
-import {
-  applyTlsPolicy,
-  defaultConfigPath,
-  expandTilde,
-  fileCredentialProvider,
-  loadConfig,
-  resolveConfigPath,
-  type ServerConfig,
-} from '@/config';
+import { defaultConfigPath, expandTilde, loadConfig, resolveConfigPath } from '@/config';
 import { runInit } from '@/init';
-import { createServer } from '@/server';
-import { createShutdown } from '@/shutdown';
-import { enableTracing, prepareTraceFile } from '@/trace';
+import { runServer } from '@/run';
 import { VERSION } from '@/version';
 
 const USAGE = `truenas-mcp-server — TrueNAS MCP server over stdio
@@ -82,88 +63,14 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig(configPath);
-  if (config.allowSelfSigned === true) {
-    applyTlsPolicy(config);
-    console.error(
-      'Warning: "allowSelfSigned" is enabled — TLS certificate verification is ' +
-        'disabled for all systems.',
-    );
-  }
-
   const traceOption = values.trace ?? process.env['TRUENAS_MCP_TRACE'];
   const tracePath = traceOption === undefined ? undefined : expandTilde(traceOption);
-  if (tracePath !== undefined) {
-    // An unusable path must fail here, before anything is serving.
-    prepareTraceFile(tracePath);
-  }
-
-  const registry = new SystemRegistry();
-  // Closes its own clients when any system fails to connect.
-  await connectSystems(registry, fileCredentialProvider(config));
-  try {
-    await serve(registry, config, configPath, tracePath);
-  } catch (error) {
-    try {
-      registry.closeAll();
-    } catch {
-      // The startup error is the one worth reporting.
-    }
-    throw error;
-  }
-}
-
-async function serve(
-  registry: SystemRegistry,
-  config: ServerConfig,
-  configPath: string,
-  tracePath?: string,
-): Promise<void> {
-  const catalog = createDefaultCatalog();
-  const confirmations = new ConfirmationService();
-  const audit = createAuditSink(config);
-  const executor = new ToolExecutor({
-    catalog,
-    registry,
-    confirmations,
-    audit,
-    // Explicitly stderr: stdout is the MCP channel, and where audit failures
-    // get reported must not depend on the core's default handler.
-    onAuditError: (error, event) => {
-      console.error(`Audit sink failed for ${event.tool}/${event.phase}:`, error);
-    },
+  // Everything from TLS policy through connect and serve lives in runServer,
+  // so the tier-2 fixture and this binary drive identical wiring.
+  await runServer(config, {
+    configPath,
+    ...(tracePath !== undefined ? { tracePath } : {}),
   });
-  const server = createServer({
-    catalog,
-    executor,
-    confirmations,
-    ...(config.requireElicitation !== undefined
-      ? { requireElicitation: config.requireElicitation }
-      : {}),
-  });
-
-  const shutdown = createShutdown({
-    flush: () => audit.flush(),
-    close: () => registry.closeAll(),
-    exit: (code) => process.exit(code),
-  });
-  process.on('SIGINT', shutdown);
-  process.on('SIGTERM', shutdown);
-  // The host closing stdio (e.g. Claude Desktop quitting) closes the transport.
-  server.onclose = shutdown;
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
-  if (tracePath !== undefined) {
-    // After connect (the SDK assigns transport.onmessage there) and with NO
-    // intervening await: any frame processed before the wrap is installed
-    // would bypass the trace.
-    enableTracing(transport, tracePath);
-    console.error(`Tracing MCP frames to ${tracePath}`);
-  }
-  console.error(
-    `truenas-mcp-server ${VERSION}: serving ${registry.names().join(', ')} ` +
-      `over stdio (config: ${configPath})`,
-  );
 }
 
 main().catch((error: unknown) => {
