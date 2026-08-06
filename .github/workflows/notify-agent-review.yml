@@ -1,0 +1,70 @@
+name: Notify agent on review request
+
+# `review_requested` fires once per reviewer added to a pull request, including
+# when reviewers are added after the PR is opened. That is the event we want:
+# it is emitted for the assignment itself, not for the PR's lifecycle.
+on:
+  pull_request:
+    types: [review_requested]
+
+permissions:
+  contents: read
+
+jobs:
+  notify:
+    name: Notify agent
+    runs-on: ubuntu-latest
+    # Two guards, both necessary:
+    #  - the event fires for every reviewer, so match the agent specifically.
+    #    A team request sets `requested_team` and leaves `requested_reviewer`
+    #    null, which fails this comparison safely.
+    #  - `pull_request` from a fork runs without repository secrets, so the
+    #    webhook URL would be empty. Skip rather than fail confusingly.
+    if: >-
+      github.event.requested_reviewer.login == 'agentsmaug' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    steps:
+      - name: Post review request to Discord
+        env:
+          # Every value below is passed as an environment variable and never
+          # interpolated into the script body with ${{ }}. A pull request title
+          # is attacker-controlled text: interpolating it directly would let a
+          # crafted title execute shell commands on the runner.
+          WEBHOOK_URL: ${{ secrets.DISCORD_AGENT_WEBHOOK_URL }}
+          AGENT_MENTION: '<@1533202140863008938>'
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK_URL}" ]; then
+            echo "DISCORD_AGENT_WEBHOOK_URL is not set — nothing to notify." >&2
+            exit 0
+          fi
+
+          # jq builds the JSON so quotes, newlines or backslashes in the title
+          # cannot break out of the payload. The title is capped because Discord
+          # rejects a message body over 2000 characters outright, and a long
+          # title would otherwise take the whole notification down with it.
+          payload=$(jq -nc \
+            --arg mention "$AGENT_MENTION" \
+            --arg repo    "$REPO" \
+            --arg num     "$PR_NUMBER" \
+            --arg title   "$PR_TITLE" \
+            --arg url     "$PR_URL" \
+            --arg sender  "$SENDER" \
+            '{
+               username: "github-review-bot",
+               content: (
+                 $mention + " review requested by " + $sender + "\n"
+                 + $repo + "#" + $num + " — " + ($title | .[0:300]) + "\n"
+                 + $url
+               )
+             }')
+
+          curl -sS --fail-with-body -X POST "$WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            --data "$payload"
