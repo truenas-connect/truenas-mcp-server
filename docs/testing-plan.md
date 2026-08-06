@@ -5,8 +5,8 @@ the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
 **Progress: tiers 0 and 1 are complete.** Phases 0, 1 and 1b have landed
-(server#7, server#9, base#5, base#6), as has Phase 2 (server#11). Phases 3
-and 4 — the tier 2 suites — remain.
+(server#7, server#9, base#5, base#6), as have Phase 2 (server#11) and
+Phase 3 (server#13). Phase 4 — the stdio session suite — remains.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -234,15 +234,15 @@ Each phase is one PR.
 ```
 Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
           ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
-Phase 2   ->  Phase 3                                                  TODO
+Phase 2   ->  Phase 3                                                  DONE
           ->  Phase 4                                                  TODO
 ```
 
-Phases 0, 1, 1b and 2 have landed — their sections below are kept as the
+Phases 0, 1, 1b, 2 and 3 have landed — their sections below are kept as the
 record of what was decided and why, since the rationale still governs how the
-floors are maintained. **Phases 3 and 4 are the next pieces of work**; both
-are unblocked now that Phase 2's `runServer` seam exists, and they are
-independent of each other.
+floors are maintained. **Phase 4 is the next piece of work**, unblocked since
+Phase 2 landed the `runServer` seam; it builds on Phase 3's `tests/` +
+`test:dist` infrastructure.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -419,7 +419,7 @@ that a connect failure closes the clients that did connect.
 It is easier, but it is a production surface that lets anyone with environment
 control swap out the connection layer. Not worth it for test convenience.
 
-### Phase 3 — built-artifact smoke (tier 2a)
+### Phase 3 — built-artifact smoke (tier 2a) *(landed: server#13)*
 
 **Deliverables**
 

@@ -36,6 +36,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "test:dist": "vitest run --config vitest.dist.config.ts",
+    "verify": "yarn typecheck && yarn lint && yarn test:coverage && yarn build && yarn test:dist",
     "lint": "eslint .",
     "clean": "rm -rf dist"
   },
