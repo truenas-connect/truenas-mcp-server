@@ -16,8 +16,11 @@ const { values } = parseArgs({
 
 const config = loadConfig(values.config);
 
-// Answers exactly the calls the default catalog's tools make; anything else
-// is a fixture bug and fails loudly.
+// Answers the calls the default catalog's tools make; anything else is a
+// fixture bug and fails loudly. Note: pool.snapshot.create is not reached by
+// the current tests — the only mutating call is refused at the elicitation
+// gate before the executor dispatches — it is here for a future
+// approval-path test.
 function fakeClient() {
   return {
     api: {
