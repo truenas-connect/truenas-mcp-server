@@ -55,28 +55,32 @@ function cli(args: string[]): Promise<CliResult> {
     child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
     child.on('error', reject);
-    child.on('close', (code) =>
+    // A regression that makes the artifact hang instead of exit would
+    // otherwise leave the child running past the test timeout.
+    const killer = setTimeout(() => child.kill('SIGKILL'), 25_000);
+    child.on('close', (code) => {
+      clearTimeout(killer);
       resolve({
         code,
         stdout: Buffer.concat(out).toString(),
         stderr: Buffer.concat(err).toString(),
-      }),
-    );
+      });
+    });
     child.stdin.end('');
   });
 }
 
-let dir: string;
-
-beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'tnmcp-dist-'));
-});
-
-afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
-});
-
 describe('dist/cli.js', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'tnmcp-dist-'));
+  });
+
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
   it('prints the version on --version', async () => {
     const { code, stdout } = await cli(['--version']);
     expect(code).toBe(0);
