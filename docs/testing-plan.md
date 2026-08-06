@@ -4,9 +4,10 @@
 the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
-**Progress: tiers 0 and 1 are complete.** Phases 0, 1 and 1b have landed
-(server#7, server#9, base#5, base#6), as have Phase 2 (server#11) and
-Phase 3 (server#13). Phase 4 — the stdio session suite — remains.
+**Progress: tiers 0–2 are complete.** Every phase has landed: Phases 0, 1
+and 1b (server#7, server#9, base#5, base#6), Phase 2 (server#11), Phase 3
+(server#13) and Phase 4 (server#15). What remains of this document's scope
+is folding it into permanent documentation; tiers 3–4 still need a home.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -65,21 +66,19 @@ named tests for mutating calls, and all six are asserted not to affect
 read-only calls. `tools/list` annotation agreement is checked against every
 default-catalog entry rather than a sample.
 
-### Tier 2 — absent
+### Tier 2 — complete
 
-Three separate gaps combine to leave it uncovered:
+Tier 2 is the intersection the tiers below cannot reach: **a real MCP
+session, over real stdio pipes, against the built artifact.** It landed in
+two suites under `tests/`, both run by `yarn test:dist` after `yarn build`:
 
-- `src/cli.spec.ts` (8 tests) **does** spawn a real subprocess, deliberately
-  via `tsx src/cli.ts` rather than `dist/` so tests cannot run against a stale
-  build. But every test either errors before connecting or is
-  `--help` / `--version`. None reaches a live MCP session.
-- `src/server.spec.ts` reaches a live MCP session, but over `InMemoryTransport`
-  rather than real stdio pipes.
-- Nothing exercises `dist/` at all: shebang survival, `bin` mapping,
-  `files: ["dist"]` completeness and tsup output are unverified.
-
-Tier 2 is exactly the intersection: **a real MCP session, over real stdio
-pipes, against the built artifact.**
+- `tests/dist.spec.ts` (Phase 3) — the artifact smoke: `dist/cli.js` spawned
+  directly, plus shebang survival, `bin` mapping, `files: ["dist"]` /
+  exports-map completeness.
+- `tests/stdio.spec.ts` (Phase 4) — the session e2e: a fixture running the
+  exported `runServer` from `dist/` with a substituted `ClientFactory`
+  (the Phase 2 seam), driven by the MCP SDK `Client`, plus a raw-pipe test
+  auditing that stdout carries nothing but JSON-RPC frames.
 
 ## Coverage policy
 
@@ -235,14 +234,12 @@ Each phase is one PR.
 Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
           ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
 Phase 2   ->  Phase 3                                                  DONE
-          ->  Phase 4                                                  TODO
+          ->  Phase 4                                                  DONE
 ```
 
-Phases 0, 1, 1b, 2 and 3 have landed — their sections below are kept as the
-record of what was decided and why, since the rationale still governs how the
-floors are maintained. **Phase 4 is the next piece of work**, unblocked since
-Phase 2 landed the `runServer` seam; it builds on Phase 3's `tests/` +
-`test:dist` infrastructure.
+All phases have landed — their sections below are kept as the record of what
+was decided and why, since the rationale still governs how the floors are
+maintained.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -432,7 +429,7 @@ control swap out the connection layer. Not worth it for test convenience.
 shebang loss, `bin` mapping errors, `files: ["dist"]` gaps and tsup config
 regressions — none of which `tsx`-on-source can see.
 
-### Phase 4 — stdio session e2e (tier 2b)
+### Phase 4 — stdio session e2e (tier 2b) *(landed: server#15)*
 
 **Deliverables**
 
