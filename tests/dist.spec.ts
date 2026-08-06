@@ -54,10 +54,13 @@ function cli(args: string[]): Promise<CliResult> {
     const err: Buffer[] = [];
     child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
     child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
-    child.on('error', reject);
     // A regression that makes the artifact hang instead of exit would
     // otherwise leave the child running past the test timeout.
     const killer = setTimeout(() => child.kill('SIGKILL'), 25_000);
+    child.on('error', (error) => {
+      clearTimeout(killer);
+      reject(error);
+    });
     child.on('close', (code) => {
       clearTimeout(killer);
       resolve({
@@ -122,6 +125,8 @@ describe('dist/cli.js', () => {
     expect(code).toBe(1);
     // The errno differs by platform (EEXIST on macOS, ENOTDIR on Linux).
     expect(stderr).toMatch(/ENOTDIR|EEXIST|not a directory/);
+    // Every expected startup failure prints the curated message, no stack.
+    expect(stderr).not.toMatch(/^\s+at /m);
   }, 30_000);
 });
 

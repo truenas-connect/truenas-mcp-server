@@ -5,8 +5,8 @@ the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
 **Progress: tiers 0 and 1 are complete.** Phases 0, 1 and 1b have landed
-(server#7, server#9, base#5, base#6), as has Phase 2 (server#11). Phases 3
-and 4 — the tier 2 suites — remain.
+(server#7, server#9, base#5, base#6), as have Phase 2 (server#11) and
+Phase 3 (server#13). Phase 4 — the stdio session suite — remains.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -234,7 +234,7 @@ Each phase is one PR.
 ```
 Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
           ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
-Phase 2   ->  Phase 3                                                  TODO
+Phase 2   ->  Phase 3                                                  DONE
           ->  Phase 4                                                  TODO
 ```
 
