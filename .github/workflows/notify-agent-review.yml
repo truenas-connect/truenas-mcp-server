@@ -7,8 +7,9 @@ on:
   pull_request:
     types: [review_requested]
 
-permissions:
-  contents: read
+# The job never checks out and never calls the API — it only POSTs to an
+# external host, so it needs no token scopes at all.
+permissions: {}
 
 jobs:
   notify:
