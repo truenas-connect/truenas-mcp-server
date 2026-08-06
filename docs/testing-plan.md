@@ -238,11 +238,11 @@ Phase 2   ->  Phase 3                                                  TODO
           ->  Phase 4                                                  TODO
 ```
 
-Phases 0, 1, 1b and 2 have landed — their sections below are kept as the
+Phases 0, 1, 1b, 2 and 3 have landed — their sections below are kept as the
 record of what was decided and why, since the rationale still governs how the
-floors are maintained. **Phases 3 and 4 are the next pieces of work**; both
-are unblocked now that Phase 2's `runServer` seam exists, and they are
-independent of each other.
+floors are maintained. **Phase 4 is the next piece of work**, unblocked since
+Phase 2 landed the `runServer` seam; it builds on Phase 3's `tests/` +
+`test:dist` infrastructure.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -419,7 +419,7 @@ that a connect failure closes the clients that did connect.
 It is easier, but it is a production surface that lets anyone with environment
 control swap out the connection layer. Not worth it for test convenience.
 
-### Phase 3 — built-artifact smoke (tier 2a)
+### Phase 3 — built-artifact smoke (tier 2a) *(landed: server#13)*
 
 **Deliverables**
 
