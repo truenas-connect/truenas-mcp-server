@@ -457,7 +457,8 @@ against a fake backend. Tier 3 needs no TrueNAS, no lab and no Jenkins.
 **What tier 3 uniquely proves.** Tiers 0–2 all drive the server with the MCP
 SDK, an implementation we control. Tier 3 answers what no lower tier can: does
 a *real* host advertise the capabilities we depend on, route our requests, and
-return responses our gate accepts.
+answer them the way our gate assumes — and, above all, **can the elicitation
+gate be bypassed by a host we do not control**.
 
 #### Findings from a working prototype (2026-08-07)
 
@@ -483,31 +484,58 @@ capabilities  {"roots":{"listChanged":true},"elicitation":{}}
   `assistant`, `user`, `system`, `result` and `rate_limit_event` events; no
   elicitation event appears, so there is nothing to reply to.
 
-#### The approve path
+#### Verifying the gate is not bypassed
 
-**Not automatable through any supported Claude CLI surface** — that is the
-conclusion of the four probes above, not a guess.
+This is the point of the phase, and it is a *negative* property: no mutating
+tool may execute without an elicitation the user answered. Absence claims need
+coverage in depth, and the bypass vectors do not all live where a real host can
+see them.
 
-The recommendation is to stop trying, because the accept path is already
-covered at the right layer. `server.spec.ts` (tier 1) drives a real MCP
-`Client` that accepts, across all six matrix cells; Phase 4 proves the same
-wiring works over real stdio. A purpose-built client that auto-accepts would
-add nothing over tier 1 — it would be *our* client again, which is precisely
-what tier 3 exists to stop relying on.
+```
+vector                                     caught by
+new mutating tool not routed via the gate  catalog + annotation checks (tier 1)
+token minted without an approval           mintSpy assertions         (tier 1)
+executor running without a token           confirmation tests         (base)
+requireElicitation off by default          six-cell matrix            (tier 1)
+gate skipped over real stdio               Phase 4 refusal test       (tier 2)
+a HOST that auto-accepts unattended        -- only tier 3 sees this
+```
 
-What tier 3 can assert about elicitation, and should:
+Only the last row needs a real host. Everything above it is asserted already,
+so tier 3 is not re-proving the gate — it is closing the one hole the other
+tiers structurally cannot reach: a host we do not control answering on the
+user's behalf.
+
+**The headless `cancel` is the assertion, not a limitation.** Headless is
+exactly the unattended case: no human is present and no plan has been shown to
+anyone. A host that returned `accept` there would silently defeat the gate and
+run mutations nobody approved. Claude Code returning `cancel` is the correct
+behaviour, and pinning it is a genuine regression check — if a future host
+version starts auto-accepting, this is the only test in the suite that would
+notice.
+
+Assertions, per host:
 
 - the host advertises `elicitation` in its initialize capabilities;
-- a mutating call causes `elicitation/create` to be sent;
-- a non-accept answer (`cancel` or `decline`) executes nothing and mints no
-  token — a real safety property, verified against a real host.
+- a mutating call causes `elicitation/create` to be sent before anything
+  executes;
+- **an unattended run never answers `accept`**;
+- a non-accept answer executes nothing and mints no token.
 
-Driving an interactive host with `pexpect` to reach the accept path was
-considered and is not recommended: it depends on the TUI rendering an
-elicitation prompt (unverified), it tests a terminal renderer as much as a
-protocol, and it breaks on any layout change. If the accept path against a
-real host is judged essential later, that is the fallback — but it should be
-opened as its own question, not assumed into this phase.
+#### Footnote: automating the accept path
+
+Deliberately out of scope. It is not reachable through any supported Claude CLI
+surface (the four probes above), and reaching it is not what this phase is for.
+
+The accept path is already covered at the right layer: `server.spec.ts` drives a
+real MCP `Client` that accepts across all six matrix cells, and Phase 4 proves
+that wiring over real stdio. A purpose-built client that auto-accepts would be
+*our* client again, which is what tier 3 exists to stop relying on.
+
+Driving an interactive host with `pexpect` would depend on the TUI rendering an
+elicitation prompt (unverified) and would test a terminal renderer as much as a
+protocol. If the accept path against a real host is later judged essential, that
+is the fallback — as its own decision, not assumed into this phase.
 
 #### Harness shape — generic core, thin per-host adapter
 
@@ -592,5 +620,7 @@ Carried here so they are not lost; none block tiers 0–2.
   should an Ollama-backed host be the only LLM-driven one? This is the one
   tier-3 question Phase 5 does not answer for itself.
 - Should the elicitation *accept* path be pursued against a real host at all?
-  Phase 5 argues no — it is covered at tier 1, and no supported Claude CLI
-  surface can reach it. Reopen deliberately if that judgement is wrong.
+  Phase 5 argues no: it is covered at tier 1, no supported Claude CLI surface
+  reaches it, and the phase's actual goal — proving the gate cannot be
+  bypassed — is served better by asserting that an unattended run never
+  accepts. Reopen deliberately if that judgement is wrong.
