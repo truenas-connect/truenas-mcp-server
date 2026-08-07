@@ -4,10 +4,10 @@
 the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
-**Progress: tiers 0–2 are complete.** Every phase has landed: Phases 0, 1
-and 1b (server#7, server#9, base#5, base#6), Phase 2 (server#11), Phase 3
-(server#13) and Phase 4 (server#15). What remains of this document's scope
-is folding it into permanent documentation; tiers 3–4 still need a home.
+**Progress: tiers 0–2 are complete.** Phases 0, 1 and 1b (server#7,
+server#9, base#5, base#6), Phase 2 (server#11), Phase 3 (server#13) and
+Phase 4 (server#15) have all landed. **Phase 5 — tier 3, real MCP hosts — is
+specified below and unblocked.** Tier 4 still needs a home.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -235,11 +235,13 @@ Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
           ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
 Phase 2   ->  Phase 3                                                  DONE
           ->  Phase 4                                                  DONE
+Phase 4   ->  Phase 5   (tier 3: real MCP hosts)                       TODO
 ```
 
-All phases have landed — their sections below are kept as the record of what
-was decided and why, since the rationale still governs how the floors are
-maintained.
+Phases 0 through 4 have landed — their sections below are kept as the record
+of what was decided and why, since the rationale still governs how the floors
+are maintained. **Phase 5 is the next piece of work**, and needs no tier-4
+infrastructure to start.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -446,6 +448,219 @@ regressions — none of which `tsx`-on-source can see.
 value one — stray stdout writes silently break every MCP client at once, and
 nothing checks for it today.
 
+### Phase 5 — real MCP hosts (tier 3) *(next)*
+
+Unblocked and **independent of tier 4**: Phase 4's fixture runs `runServer`
+with a substituted `ClientFactory`, so a real host can drive a real server
+against a fake backend. Tier 3 needs no TrueNAS, no lab and no Jenkins.
+
+**What tier 3 uniquely proves.** Tiers 0–2 all drive the server with the MCP
+SDK, an implementation we control. Tier 3 answers what no lower tier can: does
+a *real* host advertise the capabilities we depend on, route our requests, and
+answer them the way our gate assumes — and, above all, **can the elicitation
+gate be bypassed by a host we do not control**.
+
+#### Findings from a working prototype (2026-08-07)
+
+Run against `claude` CLI headless, with the Phase 4 fixture as the server and
+`--trace` as the assertion substrate. All of this is measured, not assumed.
+
+```
+clientInfo    claude-code 2.1.223
+protocol      2025-11-25
+capabilities  {"roots":{"listChanged":true},"elicitation":{}}
+```
+
+- **Claude Code advertises elicitation.** The `requireElicitation: true`
+  default therefore does *not* refuse real Claude Code users — they get the
+  in-UI approval path, which is the whole point of the default.
+- **The gate fires against a real host.** A mutating call produced
+  `send elicitation/create` followed by the host's answer.
+- **Headless always cancels the elicitation.** Verified across
+  `--permission-mode acceptEdits`, `bypassPermissions` and `dontAsk` — all
+  three returned `action=cancel`. Permission modes govern *tool* approval, not
+  elicitation.
+- **No supported hook to answer it.** `--output-format stream-json` exposes
+  `assistant`, `user`, `system`, `result` and `rate_limit_event` events; no
+  elicitation event appears, so there is nothing to reply to.
+
+#### Verifying the gate is not bypassed
+
+This is the point of the phase, and it is a *negative* property: no mutating
+tool may execute without an elicitation the user answered. Absence claims need
+coverage in depth, and the bypass vectors do not all live where a real host can
+see them.
+
+```
+vector                                     caught by
+new mutating tool not routed via the gate  catalog + annotation checks (tier 1)
+token minted without an approval           mintSpy assertions         (tier 1)
+executor running without a token           confirmation tests         (base)
+requireElicitation off by default          six-cell matrix            (tier 1)
+gate skipped over real stdio               Phase 4 refusal test       (tier 2)
+a HOST that auto-accepts unattended        -- only tier 3 sees this
+```
+
+Only the last row needs a real host. Everything above it is asserted already,
+so tier 3 is not re-proving the gate — it is closing the one hole the other
+tiers structurally cannot reach: a host we do not control answering on the
+user's behalf.
+
+**The headless `cancel` is the assertion, not a limitation.** Headless is
+exactly the unattended case: no human is present and no plan has been shown to
+anyone. A host that returned `accept` there would silently defeat the gate and
+run mutations nobody approved. Claude Code returning `cancel` is the correct
+behaviour, and pinning it is a genuine regression check — if a future host
+version starts auto-accepting, this is the only test in the suite that would
+notice.
+
+Assertions, per host:
+
+- the host advertises `elicitation` in its initialize capabilities;
+- a mutating call causes `elicitation/create` to be sent before anything
+  executes;
+- **an unattended run never answers `accept`**;
+- a non-accept answer executes nothing and mints no token;
+- **interactively, the rendered prompt contains the plan's dataset and
+  operation** — the user is shown what will change (see below).
+
+#### Interactive: proving the human is actually shown the plan
+
+Headless and interactive verify **different** things, and both are wanted.
+Every tier below stops at the wire:
+
+```
+tier 1              the server SENDS elicitation/create
+tier 3 headless     a real host ROUTES it, and never auto-accepts unattended
+tier 3 interactive  the human is SHOWN it -- including what will be changed
+```
+
+The last one is load-bearing for the safety model, which rests on *the user
+approved a plan they were shown*. A host could receive the elicitation, answer
+the protocol correctly, and render nothing useful — the gate would be
+technically satisfied and practically defeated, and nothing in tiers 0–2 would
+notice because they all stop at the frame.
+
+**Assertion:** the rendered terminal output contains the plan's own strings —
+the dataset and the operation — matched as substrings taken from the plan we
+generated, never against TUI chrome. Layout, colour and framing may change
+freely; what must not change is that the user sees *what will be modified*
+before approving.
+
+This is not about auto-accepting. Accepting can stay manual; the check is that
+the prompt reaches a human's eyes with the operation in it.
+
+**Tooling: `node-pty` + `@xterm/headless`.** Both verified on Node 26.5.1 in
+this repo's environment, and both stay in the stack everything else uses — no
+Python, no `pexpect`.
+
+```
+node-pty 1.1.0    installs in ~8s, spawns a real PTY (/dev/pts/0)
+@xterm/headless   pure JS, no native build
+```
+
+`node-pty` is the PTY layer behind VS Code's integrated terminal, which makes
+it about as proven as this category gets. It is a native dependency, so it
+needs a prebuild or a toolchain — it resolved cleanly here — and it is the one
+part of this suite plausibly broken by a Node major bump. That is an argument
+for tier 3 staying non-blocking, not against the library.
+
+`@xterm/headless` is what makes the assertion honest. Feeding PTY output to a
+real terminal emulator and reading its screen buffer beats regex-stripping ANSI
+out of a raw byte stream:
+
+```
+in    \x1b[1mCreate snapshot\x1b[0m \x1b[32mtank/data@test\x1b[0m
+out   "Create snapshot tank/data@test"
+```
+
+So `expect(screen).toContain('tank/data@test')` asserts against what a human
+sees, not against a byte stream that happens to contain it.
+
+A zero-dependency fallback exists if a native module is unwanted:
+`script -qec "<host> …" /dev/null` gives a PTY from util-linux, already present
+on `ubuntu-latest`. Cruder and POSIX-only; `node-pty` is the recommendation.
+
+**Probe status: inconclusive, and recorded as such.**
+
+- Works: a stdlib-`pty` probe drove the real Claude Code TUI and delivered a
+  prompt into the input box, so the mechanism is viable.
+- Not reached: within a 100-second budget the trace showed only `initialize`
+  and `tools/list`; no `tools/call`, so no elicitation was rendered to inspect.
+  The cause was not isolated — candidates are the submit keystroke, the model
+  not getting there in time, and the nested-session marker the CLI reported
+  (`CLAUDE_CODE_CHILD_SESSION`).
+
+Nothing here says the approach fails. It says the mechanism is viable and the
+end-to-end path is unproven, which is the honest state and the first thing this
+phase should settle.
+
+#### Footnote: automating the *accept* answer
+
+Distinct from the above, and still out of scope. Making a real host return
+`accept` unattended is not reachable through any supported Claude CLI surface
+(the four probes above), and a purpose-built client that auto-accepts would be
+*our* client again — which tier 3 exists to stop relying on. The accept path's
+server-side behaviour is covered at tier 1 across all six matrix cells, and by
+Phase 4 over real stdio.
+
+#### Harness shape — generic core, thin per-host adapter
+
+The trace is *our server's* view of the session, so every assertion is
+host-agnostic by construction. That is what makes one harness viable.
+
+```
+shared (host-agnostic)              per-host adapter (~20 lines)
+  the Phase 4 fixture as server       how to declare an MCP server
+  --trace JSONL as the substrate      how to run one prompt headless
+  node-pty + @xterm/headless          how to launch it interactively
+  the assertions below                what the client advertises
+```
+
+Each adapter supplies three things and nothing else: a config file or flag
+that points the host at the fixture, an argv for a single non-interactive
+prompt, and the expected capability set. A shared spec then runs every adapter
+through the same checks, so adding Codex CLI or Goose later is an adapter plus
+a row — not a new harness.
+
+**Assertions, all read from the trace, none from model prose.** The prototype
+demonstrated why: across two runs the model's wording differed completely
+while the frame sequence was identical.
+
+```
+initialize advertises the capabilities the adapter declares
+tools/list returns the full default catalog
+a read-only call round-trips and returns the fixture's data
+a mutating call is gated per the host's elicitation support
+nothing executes without an accept
+```
+
+#### Client matrix
+
+Verified status is marked explicitly; unverified rows are candidates, not
+claims.
+
+| Host | Headless | Elicitation | Status |
+| --- | --- | --- | --- |
+| Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07** |
+| MCP Inspector | CLI mode | n/a | not yet probed |
+| Codex CLI | likely | unknown | not installed here |
+| Goose / Ollama-backed | likely | likely not | not installed here |
+| Claude Desktop, IDE plugins | no | yes | manual only |
+
+The probe that fills a row is the same three steps each time: point the host at
+the fixture, run one prompt, read the initialize frame. Roughly ten minutes per
+client, and it must be run before a row claims anything.
+
+**Where it runs.** Nightly, non-blocking, not on PRs — it needs model
+credentials, and a model-driven step is the one part of the suite that can fail
+for reasons unrelated to the code. The Ollama-backed path, once a host is
+installed, is the only LLM-driven option with no per-run cost.
+
+**Deliberately not covered.** Whether the *model* chooses the right tool. That
+is provider behaviour, not ours, and asserting it would make the suite fail
+whenever a model updates.
+
 ## Deferred
 
 **CD is out of scope** while this is a prototype, revisited once tiers 0–2 have
@@ -469,7 +684,11 @@ Carried here so they are not lost; none block tiers 0–2.
   reporting? The proposed direction is Jenkins-as-driver, reporting outward,
   rather than GitHub Actions reaching into the lab.
 - Which TrueNAS versions must be in the tier 4 matrix?
-- For tier 3, is there appetite for model API calls in CI, or should the
-  Ollama-backed path be the only LLM-driven one?
-- Tier 3 assertions should read the `--trace` JSONL rather than model output,
-  so they stay deterministic. Tier 3 remains non-blocking regardless.
+- For tier 3, is there appetite for model API calls in a nightly job, or
+  should an Ollama-backed host be the only LLM-driven one? This is the one
+  tier-3 question Phase 5 does not answer for itself.
+- Making a real host *answer* `accept` unattended stays out of scope: no
+  supported Claude CLI surface reaches it, and an auto-accepting client would
+  be ours again. Verifying the human is *shown* the plan is in scope and is
+  the interactive half of Phase 5 — its probe is so far inconclusive, and
+  settling it is the phase's first task.
