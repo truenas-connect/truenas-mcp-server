@@ -550,11 +550,41 @@ before approving.
 This is not about auto-accepting. Accepting can stay manual; the check is that
 the prompt reaches a human's eyes with the operation in it.
 
+**Tooling: `node-pty` + `@xterm/headless`.** Both verified on Node 26.5.1 in
+this repo's environment, and both stay in the stack everything else uses — no
+Python, no `pexpect`.
+
+```
+node-pty 1.1.0    installs in ~8s, spawns a real PTY (/dev/pts/0)
+@xterm/headless   pure JS, no native build
+```
+
+`node-pty` is the PTY layer behind VS Code's integrated terminal, which makes
+it about as proven as this category gets. It is a native dependency, so it
+needs a prebuild or a toolchain — it resolved cleanly here — and it is the one
+part of this suite plausibly broken by a Node major bump. That is an argument
+for tier 3 staying non-blocking, not against the library.
+
+`@xterm/headless` is what makes the assertion honest. Feeding PTY output to a
+real terminal emulator and reading its screen buffer beats regex-stripping ANSI
+out of a raw byte stream:
+
+```
+in    \x1b[1mCreate snapshot\x1b[0m \x1b[32mtank/data@test\x1b[0m
+out   "Create snapshot tank/data@test"
+```
+
+So `expect(screen).toContain('tank/data@test')` asserts against what a human
+sees, not against a byte stream that happens to contain it.
+
+A zero-dependency fallback exists if a native module is unwanted:
+`script -qec "<host> …" /dev/null` gives a PTY from util-linux, already present
+on `ubuntu-latest`. Cruder and POSIX-only; `node-pty` is the recommendation.
+
 **Probe status: inconclusive, and recorded as such.**
 
-- Works: Python's stdlib `pty` drives the real Claude Code TUI. `pexpect` is
-  not required (and is not installed here) — `pty` plus `select` launched the
-  session and delivered the prompt into the input box.
+- Works: a stdlib-`pty` probe drove the real Claude Code TUI and delivered a
+  prompt into the input box, so the mechanism is viable.
 - Not reached: within a 100-second budget the trace showed only `initialize`
   and `tools/list`; no `tools/call`, so no elicitation was rendered to inspect.
   The cause was not isolated — candidates are the submit keystroke, the model
@@ -583,6 +613,7 @@ host-agnostic by construction. That is what makes one harness viable.
 shared (host-agnostic)              per-host adapter (~20 lines)
   the Phase 4 fixture as server       how to declare an MCP server
   --trace JSONL as the substrate      how to run one prompt headless
+  node-pty + @xterm/headless          how to launch it interactively
   the assertions below                what the client advertises
 ```
 
