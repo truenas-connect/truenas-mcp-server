@@ -520,22 +520,59 @@ Assertions, per host:
 - a mutating call causes `elicitation/create` to be sent before anything
   executes;
 - **an unattended run never answers `accept`**;
-- a non-accept answer executes nothing and mints no token.
+- a non-accept answer executes nothing and mints no token;
+- **interactively, the rendered prompt contains the plan's dataset and
+  operation** — the user is shown what will change (see below).
 
-#### Footnote: automating the accept path
+#### Interactive: proving the human is actually shown the plan
 
-Deliberately out of scope. It is not reachable through any supported Claude CLI
-surface (the four probes above), and reaching it is not what this phase is for.
+Headless and interactive verify **different** things, and both are wanted.
+Every tier below stops at the wire:
 
-The accept path is already covered at the right layer: `server.spec.ts` drives a
-real MCP `Client` that accepts across all six matrix cells, and Phase 4 proves
-that wiring over real stdio. A purpose-built client that auto-accepts would be
-*our* client again, which is what tier 3 exists to stop relying on.
+```
+tier 1              the server SENDS elicitation/create
+tier 3 headless     a real host ROUTES it, and never auto-accepts unattended
+tier 3 interactive  the human is SHOWN it -- including what will be changed
+```
 
-Driving an interactive host with `pexpect` would depend on the TUI rendering an
-elicitation prompt (unverified) and would test a terminal renderer as much as a
-protocol. If the accept path against a real host is later judged essential, that
-is the fallback — as its own decision, not assumed into this phase.
+The last one is load-bearing for the safety model, which rests on *the user
+approved a plan they were shown*. A host could receive the elicitation, answer
+the protocol correctly, and render nothing useful — the gate would be
+technically satisfied and practically defeated, and nothing in tiers 0–2 would
+notice because they all stop at the frame.
+
+**Assertion:** the rendered terminal output contains the plan's own strings —
+the dataset and the operation — matched as substrings taken from the plan we
+generated, never against TUI chrome. Layout, colour and framing may change
+freely; what must not change is that the user sees *what will be modified*
+before approving.
+
+This is not about auto-accepting. Accepting can stay manual; the check is that
+the prompt reaches a human's eyes with the operation in it.
+
+**Probe status: inconclusive, and recorded as such.**
+
+- Works: Python's stdlib `pty` drives the real Claude Code TUI. `pexpect` is
+  not required (and is not installed here) — `pty` plus `select` launched the
+  session and delivered the prompt into the input box.
+- Not reached: within a 100-second budget the trace showed only `initialize`
+  and `tools/list`; no `tools/call`, so no elicitation was rendered to inspect.
+  The cause was not isolated — candidates are the submit keystroke, the model
+  not getting there in time, and the nested-session marker the CLI reported
+  (`CLAUDE_CODE_CHILD_SESSION`).
+
+Nothing here says the approach fails. It says the mechanism is viable and the
+end-to-end path is unproven, which is the honest state and the first thing this
+phase should settle.
+
+#### Footnote: automating the *accept* answer
+
+Distinct from the above, and still out of scope. Making a real host return
+`accept` unattended is not reachable through any supported Claude CLI surface
+(the four probes above), and a purpose-built client that auto-accepts would be
+*our* client again — which tier 3 exists to stop relying on. The accept path's
+server-side behaviour is covered at tier 1 across all six matrix cells, and by
+Phase 4 over real stdio.
 
 #### Harness shape — generic core, thin per-host adapter
 
@@ -619,8 +656,8 @@ Carried here so they are not lost; none block tiers 0–2.
 - For tier 3, is there appetite for model API calls in a nightly job, or
   should an Ollama-backed host be the only LLM-driven one? This is the one
   tier-3 question Phase 5 does not answer for itself.
-- Should the elicitation *accept* path be pursued against a real host at all?
-  Phase 5 argues no: it is covered at tier 1, no supported Claude CLI surface
-  reaches it, and the phase's actual goal — proving the gate cannot be
-  bypassed — is served better by asserting that an unattended run never
-  accepts. Reopen deliberately if that judgement is wrong.
+- Making a real host *answer* `accept` unattended stays out of scope: no
+  supported Claude CLI surface reaches it, and an auto-accepting client would
+  be ours again. Verifying the human is *shown* the plan is in scope and is
+  the interactive half of Phase 5 — its probe is so far inconclusive, and
+  settling it is the phase's first task.
