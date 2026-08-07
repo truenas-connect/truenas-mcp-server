@@ -75,7 +75,7 @@ async function until(predicate: () => boolean): Promise<void> {
 }
 
 describe('stdio session (SDK-driven)', () => {
-  it('handshake, tools/list, read-only round-trip, default mutating refusal, banner, trace, SIGTERM drain', async () => {
+  it('handshake, tools/list, read-only round-trip, default mutating refusal, banner, trace, audit survives shutdown', async () => {
     const { configPath, auditPath } = writeConfig();
     const tracePath = join(dir, 'trace.jsonl');
 
@@ -166,8 +166,12 @@ describe('stdio session (SDK-driven)', () => {
       await client.close();
     }
 
-    // SIGTERM drained the audit sink before exit: the read fan-out and the
-    // refused call's plan phase are both on disk.
+    // Audit events survive to disk across a SIGTERM shutdown: the read
+    // fan-out and the refused call's plan phase are both present. This does
+    // NOT exercise shutdown's drain of an in-flight write — after several
+    // round-trips both events landed long before the signal, and forcing a
+    // write to be in flight at signal time would be a racy test. The drain
+    // logic itself is unit-tested in shutdown.spec.ts.
     const audit = readFileSync(auditPath, 'utf8').split('\n').filter(Boolean);
     const events = audit.map((line) => JSON.parse(line) as { tool: string; phase: string });
     expect(events.some((e) => e.tool === 'storage_pool_status' && e.phase === 'read')).toBe(true);
