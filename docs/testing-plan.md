@@ -4,10 +4,10 @@
 the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
 
-**Progress: tiers 0–2 are complete.** Every phase has landed: Phases 0, 1
-and 1b (server#7, server#9, base#5, base#6), Phase 2 (server#11), Phase 3
-(server#13) and Phase 4 (server#15). What remains of this document's scope
-is folding it into permanent documentation; tiers 3–4 still need a home.
+**Progress: tiers 0–2 are complete.** Phases 0, 1 and 1b (server#7,
+server#9, base#5, base#6), Phase 2 (server#11), Phase 3 (server#13) and
+Phase 4 (server#15) have all landed. **Phase 5 — tier 3, real MCP hosts — is
+specified below and unblocked.** Tier 4 still needs a home.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -235,11 +235,13 @@ Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
           ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
 Phase 2   ->  Phase 3                                                  DONE
           ->  Phase 4                                                  DONE
+Phase 4   ->  Phase 5   (tier 3: real MCP hosts)                       TODO
 ```
 
-All phases have landed — their sections below are kept as the record of what
-was decided and why, since the rationale still governs how the floors are
-maintained.
+Phases 0 through 4 have landed — their sections below are kept as the record
+of what was decided and why, since the rationale still governs how the floors
+are maintained. **Phase 5 is the next piece of work**, and needs no tier-4
+infrastructure to start.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -446,6 +448,123 @@ regressions — none of which `tsx`-on-source can see.
 value one — stray stdout writes silently break every MCP client at once, and
 nothing checks for it today.
 
+### Phase 5 — real MCP hosts (tier 3) *(next)*
+
+Unblocked and **independent of tier 4**: Phase 4's fixture runs `runServer`
+with a substituted `ClientFactory`, so a real host can drive a real server
+against a fake backend. Tier 3 needs no TrueNAS, no lab and no Jenkins.
+
+**What tier 3 uniquely proves.** Tiers 0–2 all drive the server with the MCP
+SDK, an implementation we control. Tier 3 answers what no lower tier can: does
+a *real* host advertise the capabilities we depend on, route our requests, and
+return responses our gate accepts.
+
+#### Findings from a working prototype (2026-08-07)
+
+Run against `claude` CLI headless, with the Phase 4 fixture as the server and
+`--trace` as the assertion substrate. All of this is measured, not assumed.
+
+```
+clientInfo    claude-code 2.1.223
+protocol      2025-11-25
+capabilities  {"roots":{"listChanged":true},"elicitation":{}}
+```
+
+- **Claude Code advertises elicitation.** The `requireElicitation: true`
+  default therefore does *not* refuse real Claude Code users — they get the
+  in-UI approval path, which is the whole point of the default.
+- **The gate fires against a real host.** A mutating call produced
+  `send elicitation/create` followed by the host's answer.
+- **Headless always cancels the elicitation.** Verified across
+  `--permission-mode acceptEdits`, `bypassPermissions` and `dontAsk` — all
+  three returned `action=cancel`. Permission modes govern *tool* approval, not
+  elicitation.
+- **No supported hook to answer it.** `--output-format stream-json` exposes
+  `assistant`, `user`, `system`, `result` and `rate_limit_event` events; no
+  elicitation event appears, so there is nothing to reply to.
+
+#### The approve path
+
+**Not automatable through any supported Claude CLI surface** — that is the
+conclusion of the four probes above, not a guess.
+
+The recommendation is to stop trying, because the accept path is already
+covered at the right layer. `server.spec.ts` (tier 1) drives a real MCP
+`Client` that accepts, across all six matrix cells; Phase 4 proves the same
+wiring works over real stdio. A purpose-built client that auto-accepts would
+add nothing over tier 1 — it would be *our* client again, which is precisely
+what tier 3 exists to stop relying on.
+
+What tier 3 can assert about elicitation, and should:
+
+- the host advertises `elicitation` in its initialize capabilities;
+- a mutating call causes `elicitation/create` to be sent;
+- a non-accept answer (`cancel` or `decline`) executes nothing and mints no
+  token — a real safety property, verified against a real host.
+
+Driving an interactive host with `pexpect` to reach the accept path was
+considered and is not recommended: it depends on the TUI rendering an
+elicitation prompt (unverified), it tests a terminal renderer as much as a
+protocol, and it breaks on any layout change. If the accept path against a
+real host is judged essential later, that is the fallback — but it should be
+opened as its own question, not assumed into this phase.
+
+#### Harness shape — generic core, thin per-host adapter
+
+The trace is *our server's* view of the session, so every assertion is
+host-agnostic by construction. That is what makes one harness viable.
+
+```
+shared (host-agnostic)              per-host adapter (~20 lines)
+  the Phase 4 fixture as server       how to declare an MCP server
+  --trace JSONL as the substrate      how to run one prompt headless
+  the assertions below                what the client advertises
+```
+
+Each adapter supplies three things and nothing else: a config file or flag
+that points the host at the fixture, an argv for a single non-interactive
+prompt, and the expected capability set. A shared spec then runs every adapter
+through the same checks, so adding Codex CLI or Goose later is an adapter plus
+a row — not a new harness.
+
+**Assertions, all read from the trace, none from model prose.** The prototype
+demonstrated why: across two runs the model's wording differed completely
+while the frame sequence was identical.
+
+```
+initialize advertises the capabilities the adapter declares
+tools/list returns the full default catalog
+a read-only call round-trips and returns the fixture's data
+a mutating call is gated per the host's elicitation support
+nothing executes without an accept
+```
+
+#### Client matrix
+
+Verified status is marked explicitly; unverified rows are candidates, not
+claims.
+
+| Host | Headless | Elicitation | Status |
+| --- | --- | --- | --- |
+| Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07** |
+| MCP Inspector | CLI mode | n/a | not yet probed |
+| Codex CLI | likely | unknown | not installed here |
+| Goose / Ollama-backed | likely | likely not | not installed here |
+| Claude Desktop, IDE plugins | no | yes | manual only |
+
+The probe that fills a row is the same three steps each time: point the host at
+the fixture, run one prompt, read the initialize frame. Roughly ten minutes per
+client, and it must be run before a row claims anything.
+
+**Where it runs.** Nightly, non-blocking, not on PRs — it needs model
+credentials, and a model-driven step is the one part of the suite that can fail
+for reasons unrelated to the code. The Ollama-backed path, once a host is
+installed, is the only LLM-driven option with no per-run cost.
+
+**Deliberately not covered.** Whether the *model* chooses the right tool. That
+is provider behaviour, not ours, and asserting it would make the suite fail
+whenever a model updates.
+
 ## Deferred
 
 **CD is out of scope** while this is a prototype, revisited once tiers 0–2 have
@@ -469,7 +588,9 @@ Carried here so they are not lost; none block tiers 0–2.
   reporting? The proposed direction is Jenkins-as-driver, reporting outward,
   rather than GitHub Actions reaching into the lab.
 - Which TrueNAS versions must be in the tier 4 matrix?
-- For tier 3, is there appetite for model API calls in CI, or should the
-  Ollama-backed path be the only LLM-driven one?
-- Tier 3 assertions should read the `--trace` JSONL rather than model output,
-  so they stay deterministic. Tier 3 remains non-blocking regardless.
+- For tier 3, is there appetite for model API calls in a nightly job, or
+  should an Ollama-backed host be the only LLM-driven one? This is the one
+  tier-3 question Phase 5 does not answer for itself.
+- Should the elicitation *accept* path be pursued against a real host at all?
+  Phase 5 argues no — it is covered at tier 1, and no supported Claude CLI
+  surface can reach it. Reopen deliberately if that judgement is wrong.
