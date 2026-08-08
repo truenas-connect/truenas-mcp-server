@@ -655,6 +655,16 @@ credentials, and a model-driven step is the one part of the suite that can fail
 for reasons unrelated to the code. The Ollama-backed path, once a host is
 installed, is the only LLM-driven option with no per-run cost.
 
+**Open follow-up: nothing schedules this yet.** `test:hosts` is deliberately
+outside PR CI and `verify`, so today it runs only when a human types the
+command — and this suite's job is catching regressions in software we do not
+control, so an unscheduled run means the auto-accept check is not continuous.
+Wiring a nightly workflow is blocked on the model-credentials question under
+Open questions; whoever wires it should know that headless CI auth is
+`CLAUDE_CODE_OAUTH_TOKEN` (the harness's env scrub deliberately lets it
+through), a headless run costs roughly $0.30 of model spend, and the suite
+needs `yarn build` first.
+
 **Deliberately not covered.** Whether the *model* chooses the right tool. That
 is provider behaviour, not ours, and asserting it would make the suite fail
 whenever a model updates.
