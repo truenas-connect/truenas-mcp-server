@@ -55,8 +55,7 @@ for (const adapter of adapters) {
       const exitCode = await new Promise<number | null>((resolve, reject) => {
         child.on('error', reject);
         child.on('close', (code) => resolve(code));
-      });
-      clearTimeout(killer);
+      }).finally(() => clearTimeout(killer));
       // The host's own output is context for humans debugging a failure, not
       // an assertion substrate.
       expect(exitCode, Buffer.concat(output).toString().slice(-2000)).toBe(0);

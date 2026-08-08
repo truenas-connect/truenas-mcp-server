@@ -98,16 +98,18 @@ describe.skipIf(!hostOnPath(claudeCode.command))('claude-code (interactive TUI)'
     expect(elicit, 'server never sent elicitation/create').toBeDefined();
     const planMessage = elicit?.message.params?.['message'] as string;
 
-    // The strings the human must see, both taken from the plan we generated:
-    // the operation description line (which carries the snapshot id) and the
-    // tool name — the one stable literal, as an anchor.
-    const operation = /\[nas-a\] (.+)/.exec(planMessage)?.[1];
-    expect(operation).toBe('Create snapshot "tank/data@probe2"');
+    // The string the human must see, taken from the plan we generated: the
+    // snapshot id. Deliberately not the full prose line — the model chooses
+    // the snapshot name, and pinning its exact wording would fail on a
+    // paraphrase rather than on the thing under test (that the human is
+    // shown what will change). The tool name is the one stable literal.
+    const snapshotId = /"([^"]+@[^"]+)"/.exec(planMessage)?.[1];
+    expect(snapshotId).toMatch(/^tank\/data@/);
 
     // The rendered screen shows them before any approval happens.
-    await until(() => screenText().includes(operation as string), 30_000);
+    await until(() => screenText().includes(snapshotId as string), 30_000);
     const screen = screenText();
-    expect(screen).toContain(operation as string);
+    expect(screen).toContain(snapshotId as string);
     expect(screen).toContain('snapshots_create');
 
     // Decline via Esc; the answer must be a non-accept and nothing executes.

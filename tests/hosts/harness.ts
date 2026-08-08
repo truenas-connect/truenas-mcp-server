@@ -58,18 +58,26 @@ export function setUpFixture(dir: string): FixturePaths {
   return { mcpConfigPath, tracePath, auditPath };
 }
 
+/** The nested-session markers Claude Code sets in child sessions. Scrubbed
+ * by explicit name — never by prefix, because CLAUDE_CODE_OAUTH_TOKEN is a
+ * documented headless-auth credential the nightly CI path will need, and a
+ * CLAUDE_CODE_* sweep would silently strip it. */
+const NESTED_SESSION_MARKERS = new Set([
+  'CLAUDECODE',
+  'CLAUDE_CODE_ENTRYPOINT',
+  'CLAUDE_CODE_SSE_PORT',
+  'CLAUDE_CODE_CHILD_SESSION',
+]);
+
 /** Child env with nested-session and ambient config markers scrubbed. On a
  * dev machine this suite often runs from inside a Claude Code session, whose
- * CLAUDECODE / CLAUDE_CODE_* markers change host behavior. The scrub is
- * deliberately surgical: a broad CLAUDE* sweep would also strip
- * CLAUDE-prefixed credentials in CI setups that authenticate that way. */
+ * markers change host behavior. */
 export function hostEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
     if (
       value !== undefined &&
-      key !== 'CLAUDECODE' &&
-      !key.startsWith('CLAUDE_CODE_') &&
+      !NESTED_SESSION_MARKERS.has(key) &&
       !key.startsWith('TRUENAS_MCP_')
     ) {
       env[key] = value;
