@@ -5,7 +5,15 @@ import { Terminal } from '@xterm/headless';
 import { spawn as ptySpawn, type IPty } from 'node-pty';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { claudeCode } from './adapters';
-import { hostEnv, hostOnPath, readAudit, readTrace, setUpFixture, until } from './harness';
+import {
+  elicitationAnswers,
+  hostEnv,
+  hostOnPath,
+  readAudit,
+  readTrace,
+  setUpFixture,
+  until,
+} from './harness';
 
 /**
  * Tier 3, interactive (testing-plan Phase 5): proves the human is actually
@@ -90,31 +98,26 @@ describe.skipIf(!hostOnPath(claudeCode.command))('claude-code (interactive TUI)'
     expect(elicit, 'server never sent elicitation/create').toBeDefined();
     const planMessage = elicit?.message.params?.['message'] as string;
 
-    // The strings the human must see, taken from the plan we generated: the
-    // snapshot id and the operation description line.
-    const snapshotId = /"([^"]+@[^"]+)"/.exec(planMessage)?.[1];
-    expect(snapshotId).toBe('tank/data@probe2');
+    // The strings the human must see, both taken from the plan we generated:
+    // the operation description line (which carries the snapshot id) and the
+    // tool name — the one stable literal, as an anchor.
+    const operation = /\[nas-a\] (.+)/.exec(planMessage)?.[1];
+    expect(operation).toBe('Create snapshot "tank/data@probe2"');
 
     // The rendered screen shows them before any approval happens.
-    await until(() => screenText().includes(snapshotId as string), 30_000);
+    await until(() => screenText().includes(operation as string), 30_000);
     const screen = screenText();
-    expect(screen).toContain(snapshotId as string);
-    expect(screen).toContain('Create snapshot');
+    expect(screen).toContain(operation as string);
     expect(screen).toContain('snapshots_create');
 
     // Decline via Esc; the answer must be a non-accept and nothing executes.
     pty.write('\x1b');
-    await until(
-      () =>
-        readTrace(tracePath).some(
-          (f) => f.dir === 'recv' && (f.message.result as { action?: string } | undefined)?.action,
-        ),
-      60_000,
-    );
-    const answer = readTrace(tracePath).find(
-      (f) => f.dir === 'recv' && (f.message.result as { action?: string } | undefined)?.action,
-    );
-    expect((answer?.message.result as { action: string }).action).not.toBe('accept');
+    await until(() => elicitationAnswers(readTrace(tracePath)).length > 0, 60_000);
+    const answers = elicitationAnswers(readTrace(tracePath));
+    expect(answers.length).toBeGreaterThan(0);
+    for (const answer of answers) {
+      expect(answer).not.toBe('accept');
+    }
     expect(readAudit(auditPath).some((e) => e.phase === 'execute')).toBe(false);
   });
 });

@@ -6,6 +6,7 @@ import { createDefaultCatalog, Role } from '@truenas/mcp-base';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { adapters } from './adapters';
 import {
+  elicitationAnswers,
   hostEnv,
   hostOnPath,
   readAudit,
@@ -51,9 +52,10 @@ for (const adapter of adapters) {
       child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
       child.stderr.on('data', (chunk: Buffer) => output.push(chunk));
       const killer = setTimeout(() => child.kill('SIGKILL'), 240_000);
-      const exitCode = await new Promise<number | null>((resolve) =>
-        child.on('close', (code) => resolve(code)),
-      );
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', (code) => resolve(code));
+      });
       clearTimeout(killer);
       // The host's own output is context for humans debugging a failure, not
       // an assertion substrate.
@@ -92,12 +94,10 @@ for (const adapter of adapters) {
       expect(elicit?.message.params?.['message']).toContain('tank/data@probe');
 
       // THE tier-3 assertion: unattended, the host never answers accept.
-      const answers = frames.filter(
-        (f) => f.dir === 'recv' && (f.message.result as { action?: string } | undefined)?.action,
-      );
+      const answers = elicitationAnswers(frames);
       expect(answers.length).toBeGreaterThan(0);
       for (const answer of answers) {
-        expect((answer.message.result as { action: string }).action).not.toBe('accept');
+        expect(answer).not.toBe('accept');
       }
 
       // And the non-accept executed nothing and leaked no token: the plan

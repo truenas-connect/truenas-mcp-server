@@ -59,12 +59,19 @@ export function setUpFixture(dir: string): FixturePaths {
 }
 
 /** Child env with nested-session and ambient config markers scrubbed. On a
- * dev machine this suite often runs from inside a Claude Code session, and
- * CLAUDE* leakage changes host behavior. */
+ * dev machine this suite often runs from inside a Claude Code session, whose
+ * CLAUDECODE / CLAUDE_CODE_* markers change host behavior. The scrub is
+ * deliberately surgical: a broad CLAUDE* sweep would also strip
+ * CLAUDE-prefixed credentials in CI setups that authenticate that way. */
 export function hostEnv(): Record<string, string> {
   const env: Record<string, string> = {};
   for (const [key, value] of Object.entries(process.env)) {
-    if (value !== undefined && !key.startsWith('CLAUDE') && !key.startsWith('TRUENAS_MCP_')) {
+    if (
+      value !== undefined &&
+      key !== 'CLAUDECODE' &&
+      !key.startsWith('CLAUDE_CODE_') &&
+      !key.startsWith('TRUENAS_MCP_')
+    ) {
       env[key] = value;
     }
   }
@@ -94,6 +101,15 @@ export function readTrace(tracePath: string): TraceFrame[] {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as TraceFrame);
+}
+
+/** Every elicitation answer the client returned (recv frames with an
+ * `action` result). Unattended, none of these may ever be "accept". */
+export function elicitationAnswers(frames: TraceFrame[]): string[] {
+  return frames
+    .filter((f) => f.dir === 'recv')
+    .map((f) => (f.message.result as { action?: string } | undefined)?.action)
+    .filter((action): action is string => action !== undefined);
 }
 
 export function readAudit(auditPath: string): { tool: string; phase: string }[] {
