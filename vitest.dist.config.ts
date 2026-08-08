@@ -10,6 +10,8 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
-    include: ['tests/**/*.spec.ts'],
+    // Top level only: tests/hosts/ is tier 3 (vitest.hosts.config.ts) —
+    // model-spending, never on PRs.
+    include: ['tests/*.spec.ts'],
   },
 });
