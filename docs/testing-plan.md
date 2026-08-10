@@ -581,19 +581,17 @@ A zero-dependency fallback exists if a native module is unwanted:
 `script -qec "<host> …" /dev/null` gives a PTY from util-linux, already present
 on `ubuntu-latest`. Cruder and POSIX-only; `node-pty` is the recommendation.
 
-**Probe status: inconclusive, and recorded as such.**
-
-- Works: a stdlib-`pty` probe drove the real Claude Code TUI and delivered a
-  prompt into the input box, so the mechanism is viable.
-- Not reached: within a 100-second budget the trace showed only `initialize`
-  and `tools/list`; no `tools/call`, so no elicitation was rendered to inspect.
-  The cause was not isolated — candidates are the submit keystroke, the model
-  not getting there in time, and the nested-session marker the CLI reported
-  (`CLAUDE_CODE_CHILD_SESSION`).
-
-Nothing here says the approach fails. It says the mechanism is viable and the
-end-to-end path is unproven, which is the honest state and the first thing this
-phase should settle.
+**Probe status: settled 2026-08-08.** The earlier inconclusive probe's cause
+was none of the suspected three: Claude Code renders a **trust-folder dialog**
+in a fresh directory before the input box exists, so the typed prompt landed
+in the dialog and the Enter answered it — leaving an empty input box and,
+within any budget, no `tools/call`. With the dialog answered first, the
+end-to-end path completes in ~15 seconds: prompt → `tools/call` →
+`elicitation/create` → the rendered dialog contains the plan verbatim
+(`Create snapshot "tank/data@probe2"`, arguments, target system) →
+Esc declines → `action=cancel`, nothing executes. The interactive spec's
+driver answers the dialog before typing; the nested-session marker was
+scrubbed from the child env as a precaution but was not the cause.
 
 #### Footnote: automating the *accept* answer
 
@@ -642,7 +640,7 @@ claims.
 
 | Host | Headless | Elicitation | Status |
 | --- | --- | --- | --- |
-| Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07** |
+| Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07; interactive render verified 2026-08-08** |
 | MCP Inspector | CLI mode | n/a | not yet probed |
 | Codex CLI | likely | unknown | not installed here |
 | Goose / Ollama-backed | likely | likely not | not installed here |
@@ -656,6 +654,16 @@ client, and it must be run before a row claims anything.
 credentials, and a model-driven step is the one part of the suite that can fail
 for reasons unrelated to the code. The Ollama-backed path, once a host is
 installed, is the only LLM-driven option with no per-run cost.
+
+**Open follow-up: nothing schedules this yet.** `test:hosts` is deliberately
+outside PR CI and `verify`, so today it runs only when a human types the
+command — and this suite's job is catching regressions in software we do not
+control, so an unscheduled run means the auto-accept check is not continuous.
+Wiring a nightly workflow is blocked on the model-credentials question under
+Open questions; whoever wires it should know that headless CI auth is
+`CLAUDE_CODE_OAUTH_TOKEN` (the harness's env scrub deliberately lets it
+through), a headless run costs roughly $0.30 of model spend, and the suite
+needs `yarn build` first.
 
 **Deliberately not covered.** Whether the *model* chooses the right tool. That
 is provider behaviour, not ours, and asserting it would make the suite fail
@@ -690,5 +698,5 @@ Carried here so they are not lost; none block tiers 0–2.
 - Making a real host *answer* `accept` unattended stays out of scope: no
   supported Claude CLI surface reaches it, and an auto-accepting client would
   be ours again. Verifying the human is *shown* the plan is in scope and is
-  the interactive half of Phase 5 — its probe is so far inconclusive, and
-  settling it is the phase's first task.
+  the interactive half of Phase 5 — its probe is settled (see Probe status)
+  and the assertion is implemented in `tests/hosts/interactive.spec.ts`.

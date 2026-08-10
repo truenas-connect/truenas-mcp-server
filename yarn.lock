@@ -867,7 +867,9 @@ __metadata:
     "@truenas/mcp-base": "git+https://github.com/truenas-connect/truenas-mcp-base.git#main"
     "@types/node": "npm:^22.0.0"
     "@vitest/coverage-v8": "npm:^3.0.0"
+    "@xterm/headless": "npm:^6.0.0"
     eslint: "npm:^9.18.0"
+    node-pty: "npm:^1.1.0"
     rxjs: "npm:~7.8.0"
     tsup: "npm:^8.3.5"
     tsx: "npm:^4.19.0"
@@ -1161,6 +1163,13 @@ __metadata:
     loupe: "npm:^3.1.4"
     tinyrainbow: "npm:^2.0.0"
   checksum: 10c0/fea57d6cf66853926f54ea6e9bd249b707120b0abba565d96a3880c7f04d5c5cd4778546879b9074cc73c0b81b475c1873791d4b3b3e5a324115b5bcfd3a46bb
+  languageName: node
+  linkType: hard
+
+"@xterm/headless@npm:^6.0.0":
+  version: 6.0.0
+  resolution: "@xterm/headless@npm:6.0.0"
+  checksum: 10c0/9fa915767d89f52e5c066e2b8160f56701a95382205b03665247b381bb319ed5702626227a933cbb36c4df01c619bc0cc38c96ce9635dc141e88a9742d6ed669
   languageName: node
   linkType: hard
 
@@ -2843,6 +2852,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"node-addon-api@npm:^7.1.0":
+  version: 7.1.1
+  resolution: "node-addon-api@npm:7.1.1"
+  dependencies:
+    node-gyp: "npm:latest"
+  checksum: 10c0/fb32a206276d608037fa1bcd7e9921e177fe992fc610d098aa3128baca3c0050fc1e014fa007e9b3874cf865ddb4f5bd9f43ccb7cbbbe4efaff6a83e920b17e9
+  languageName: node
+  linkType: hard
+
 "node-gyp@npm:latest":
   version: 13.0.1
   resolution: "node-gyp@npm:13.0.1"
@@ -2860,6 +2878,16 @@ __metadata:
   bin:
     node-gyp: bin/node-gyp.js
   checksum: 10c0/424077bc9e9bbe953a8e86db473ba818cbc6a121714008c977fd589e21e5f0c811fbf22faac730dc7182450b5e52df301811d01ae3373898658d999b7710f4e6
+  languageName: node
+  linkType: hard
+
+"node-pty@npm:^1.1.0":
+  version: 1.1.0
+  resolution: "node-pty@npm:1.1.0"
+  dependencies:
+    node-addon-api: "npm:^7.1.0"
+    node-gyp: "npm:latest"
+  checksum: 10c0/e527305263da36d554b7d2116aee6430b898675fc50e7bd82fbd762f14cb6b948fb8d997736af1f70d76bf9ffd4f5179bc1ed1d8002567dfcf3b29f039291798
   languageName: node
   linkType: hard
 
