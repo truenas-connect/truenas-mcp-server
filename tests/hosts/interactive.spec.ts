@@ -56,7 +56,15 @@ describe.skipIf(!hostOnPath(claudeCode.command))('claude-code (interactive TUI)'
     const pty = ptySpawn(
       claudeCode.command,
       claudeCode.interactiveArgs?.(fixture) ?? [],
-      { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd: dir, env: hostEnv() },
+      {
+        name: 'xterm-256color',
+        cols: COLS,
+        rows: ROWS,
+        cwd: dir,
+        // Merged like the headless path, so a future interactive host that
+        // declares env (goose needs GOOSE_PROVIDER/GOOSE_MODEL) keeps it.
+        env: { ...hostEnv(), ...claudeCode.env },
+      },
     );
     child = pty;
     pty.onData((data) => term.write(data));

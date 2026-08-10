@@ -37,14 +37,16 @@ jobs:
         with:
           path: ~/.ollama/models
           key: ollama-qwen3-4b
-      - name: Wait for ollama and pull the model
+      - name: Start ollama and pull the model
         run: |
-          # The Linux installer registers and starts a systemd service, which
-          # is also what persists across steps; only start a server manually
-          # if that didn't happen.
-          if ! ollama list >/dev/null 2>&1; then
-            nohup ollama serve >/dev/null 2>&1 &
-          fi
+          # The installer starts a systemd service running as the `ollama`
+          # system user, whose model dir (/usr/share/ollama/.ollama) the cache
+          # step above cannot restore into. Replace it with a server running
+          # as the runner user, so models land in ~/.ollama/models — the
+          # cached path — and the 2.5GB pull is a no-op on warm runs. The
+          # backgrounded server persists across the job's later steps.
+          sudo systemctl disable --now ollama 2>/dev/null || true
+          nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
           ollama list >/dev/null
           ollama pull qwen3:4b

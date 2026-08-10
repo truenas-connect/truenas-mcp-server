@@ -22,8 +22,8 @@ import {
  * model prose. The load-bearing one is the negative: an unattended host must
  * never answer an elicitation with "accept". A host that did would silently
  * run mutations nobody approved, and no lower tier can see that. Hosts fail
- * closed in different shapes (see HostAdapter.unattendedElicitation); what
- * they must have in common is the absence of an accept.
+ * closed in different shapes (see HostAdapter.deterministicUnattendedShape);
+ * what they must have in common is the absence of an accept.
  */
 
 const expectedTools = createDefaultCatalog()
