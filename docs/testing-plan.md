@@ -658,11 +658,12 @@ installed, is the only LLM-driven option with no per-run cost.
 **Scheduled: `.github/workflows/nightly-hosts.yml`** (decision 2026-08-10:
 Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
 goose on `ubuntu-latest`, pulls `qwen3:4b` (cached between runs), builds, and
-runs `test:hosts`; the claude-code adapter skips there because the binary is
-absent, and runs wherever a developer has `claude` locally. Adding claude-code
-to the nightly later needs only installing the CLI in the job and providing
-`CLAUDE_CODE_OAUTH_TOKEN` (the harness's env scrub deliberately lets it
-through) at roughly $0.30 per headless run.
+runs `test:hosts`. The claude-code adapter is included when the
+`CLAUDE_CODE_OAUTH_TOKEN` repository secret is configured (minted with
+`claude setup-token`; the harness's env scrub deliberately lets it through) at
+roughly $0.30 of model spend per headless run — without the secret the
+install step is skipped and the claude rows skip, degrading the job to
+Ollama-only rather than failing.
 
 The nightly covers **both halves** of the phase: goose has an interactive
 adapter too (its TUI renders the elicitation with the plan verbatim, probed
