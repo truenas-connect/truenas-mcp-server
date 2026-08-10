@@ -14,7 +14,9 @@ export default defineConfig({
     // One host session at a time: parallel TUIs fight over credentials,
     // model rate limits and PTY resources.
     fileParallelism: false,
-    testTimeout: 300_000,
+    // Generous: nightly CI runs an Ollama model on CPU, where a session that
+    // takes 15s locally can take minutes.
+    testTimeout: 600_000,
     hookTimeout: 60_000,
   },
 });

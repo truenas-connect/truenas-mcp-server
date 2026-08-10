@@ -50,11 +50,12 @@ describe.skipIf(!hostOnPath(claudeCode.command))('claude-code (interactive TUI)'
   });
 
   it('renders the plan to the human before asking for approval; Esc declines', async () => {
-    const { mcpConfigPath, tracePath, auditPath } = setUpFixture(dir);
+    const fixture = setUpFixture(dir);
+    const { tracePath, auditPath } = fixture;
     const term = new Terminal({ cols: COLS, rows: ROWS, allowProposedApi: true });
     const pty = ptySpawn(
       claudeCode.command,
-      claudeCode.interactiveArgs?.(mcpConfigPath) ?? [],
+      claudeCode.interactiveArgs?.(fixture) ?? [],
       { name: 'xterm-256color', cols: COLS, rows: ROWS, cwd: dir, env: hostEnv() },
     );
     child = pty;

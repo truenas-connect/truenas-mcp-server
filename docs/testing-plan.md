@@ -41,7 +41,7 @@ scope. Each covers something the others structurally cannot.
 | 0 | Unit / component | GitHub Actions, every PR | yes |
 | 1 | MCP protocol semantics, in-process | GitHub Actions, every PR | yes |
 | 2 | Real MCP session over real stdio, against the built artifact | GitHub Actions, every PR | yes |
-| 3 | Real MCP clients (Claude Code CLI, Codex CLI, Ollama-backed) | nightly, TBD | no |
+| 3 | Real MCP clients (Claude Code CLI, goose/Ollama-backed) | GitHub Actions, nightly | no |
 | 4 | Real TrueNAS | Jenkins, nightly | TBD |
 
 Tiers 0–2 need no secrets, no network egress and no lab access, which is what
@@ -643,7 +643,7 @@ claims.
 | Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07; interactive render verified 2026-08-08** |
 | MCP Inspector | CLI mode | n/a | not yet probed |
 | Codex CLI | likely | unknown | not installed here |
-| Goose / Ollama-backed | likely | likely not | not installed here |
+| Goose / Ollama-backed (qwen3:4b) | yes | **yes** — errors out unattended, exit 1, never answers | **verified 2026-08-10** |
 | Claude Desktop, IDE plugins | no | yes | manual only |
 
 The probe that fills a row is the same three steps each time: point the host at
@@ -655,15 +655,17 @@ credentials, and a model-driven step is the one part of the suite that can fail
 for reasons unrelated to the code. The Ollama-backed path, once a host is
 installed, is the only LLM-driven option with no per-run cost.
 
-**Open follow-up: nothing schedules this yet.** `test:hosts` is deliberately
-outside PR CI and `verify`, so today it runs only when a human types the
-command — and this suite's job is catching regressions in software we do not
-control, so an unscheduled run means the auto-accept check is not continuous.
-Wiring a nightly workflow is blocked on the model-credentials question under
-Open questions; whoever wires it should know that headless CI auth is
+**Scheduled: `.github/workflows/nightly-hosts.yml`** (decision 2026-08-10:
+Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
+goose on `ubuntu-latest`, pulls `qwen3:4b` (cached between runs), builds, and
+runs `test:hosts`; the claude-code adapter skips there because the binary is
+absent, and runs wherever a developer has `claude` locally. Adding claude-code
+to the nightly later needs only installing the CLI in the job and providing
 `CLAUDE_CODE_OAUTH_TOKEN` (the harness's env scrub deliberately lets it
-through), a headless run costs roughly $0.30 of model spend, and the suite
-needs `yarn build` first.
+through) at roughly $0.30 per headless run. Two fail-closed shapes are
+asserted per adapter: claude-code answers `cancel`; goose errors out without
+answering and exits non-zero. Both count — the invariant is only that no
+unattended run ever answers `accept`.
 
 **Deliberately not covered.** Whether the *model* chooses the right tool. That
 is provider behaviour, not ours, and asserting it would make the suite fail
@@ -692,9 +694,11 @@ Carried here so they are not lost; none block tiers 0–2.
   reporting? The proposed direction is Jenkins-as-driver, reporting outward,
   rather than GitHub Actions reaching into the lab.
 - Which TrueNAS versions must be in the tier 4 matrix?
-- For tier 3, is there appetite for model API calls in a nightly job, or
-  should an Ollama-backed host be the only LLM-driven one? This is the one
-  tier-3 question Phase 5 does not answer for itself.
+- ~~For tier 3, is there appetite for model API calls in a nightly job, or
+  should an Ollama-backed host be the only LLM-driven one?~~ Answered
+  2026-08-10: the nightly is Ollama-backed (goose + qwen3:4b), spending no
+  API credits; claude-code runs locally where a developer has the CLI, and
+  can be added to the nightly later via `CLAUDE_CODE_OAUTH_TOKEN`.
 - Making a real host *answer* `accept` unattended stays out of scope: no
   supported Claude CLI surface reaches it, and an auto-accepting client would
   be ours again. Verifying the human is *shown* the plan is in scope and is

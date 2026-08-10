@@ -27,6 +27,9 @@ export interface FixturePaths {
   mcpConfigPath: string;
   tracePath: string;
   auditPath: string;
+  /** The fixture as one command line, for hosts that take a command rather
+   * than a config file (goose's --with-extension). */
+  serverCommand: string;
 }
 
 /** Writes the server config and an MCP config pointing the host at the
@@ -44,18 +47,19 @@ export function setUpFixture(dir: string): FixturePaths {
     }),
     { mode: 0o600 },
   );
+  const args = [fixture, '--config', configPath, '--trace', tracePath];
   writeFileSync(
     mcpConfigPath,
     JSON.stringify({
-      mcpServers: {
-        truenas: {
-          command: process.execPath,
-          args: [fixture, '--config', configPath, '--trace', tracePath],
-        },
-      },
+      mcpServers: { truenas: { command: process.execPath, args } },
     }),
   );
-  return { mcpConfigPath, tracePath, auditPath };
+  return {
+    mcpConfigPath,
+    tracePath,
+    auditPath,
+    serverCommand: [process.execPath, ...args].join(' '),
+  };
 }
 
 /** The nested-session markers Claude Code sets in child sessions. Scrubbed

@@ -1,0 +1,50 @@
+name: Nightly hosts (tier 3)
+
+# Tier 3 of the testing plan: real MCP hosts against the Phase 4 fixture.
+# Nightly and non-blocking by design — a model-driven step can fail for
+# reasons unrelated to the code (docs/testing-plan.md, Phase 5). This job is
+# Ollama-backed (goose + a local model), so it spends no model-API credits;
+# the claude-code adapter simply skips because the binary is not installed
+# here, and runs wherever a developer has `claude` locally.
+
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hosts:
+    name: real MCP hosts (Ollama-backed)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: corepack enable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: yarn
+      - run: yarn install --immutable
+      # The suite drives the Phase 4 fixture from dist/.
+      - run: yarn build
+      - name: Install ollama
+        run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Cache the model
+        uses: actions/cache@v4
+        with:
+          path: ~/.ollama/models
+          key: ollama-qwen3-4b
+      - name: Start ollama and pull the model
+        run: |
+          ollama serve &
+          for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
+          ollama pull qwen3:4b
+      - name: Install goose
+        run: |
+          curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \
+            | CONFIGURE=false bash
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - run: yarn test:hosts

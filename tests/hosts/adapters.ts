@@ -1,31 +1,45 @@
-import { ALLOWED_TOOLS } from './harness';
+import { spawnSync } from 'node:child_process';
+import { ALLOWED_TOOLS, hostOnPath, type FixturePaths } from './harness';
 
 /**
- * A host adapter supplies exactly three things: how to point the host at the
- * fixture, how to run one non-interactive prompt, and what the host is
- * expected to advertise. Everything else — fixture, trace, assertions — is
- * the shared harness. Adding a host is an adapter plus a matrix row.
+ * A host adapter supplies how to point the host at the fixture, how to run
+ * one non-interactive prompt, and what behavior to expect. Everything else —
+ * fixture, trace, assertions — is the shared harness. Adding a host is an
+ * adapter plus a matrix row, and a row is only added once probed (plan:
+ * "unverified rows are candidates, not claims").
  */
 export interface HostAdapter {
   name: string;
   /** Binary on PATH; the host's rows are skipped when absent. */
   command: string;
+  /** Extra availability requirements beyond the binary (e.g. a local model
+   * server); rows are skipped, not failed, when unmet. */
+  available?(): boolean;
+  /** Extra child env the host needs. */
+  env?: Record<string, string>;
   /** argv for a single non-interactive (headless) prompt. */
-  headlessArgs(mcpConfigPath: string, prompt: string): string[];
-  /** argv for the interactive TUI; omit for hosts without one. */
-  interactiveArgs?(mcpConfigPath: string): string[];
+  headlessArgs(fixture: FixturePaths, prompt: string): string[];
+  /** argv to launch the interactive TUI; omit for hosts without one. */
+  interactiveArgs?(fixture: FixturePaths): string[];
   /** What the host's initialize request is expected to advertise. */
   expectsElicitation: boolean;
+  /**
+   * How the host fails closed on an unattended elicitation. Claude Code
+   * answers it with action=cancel; goose errors out without answering (and
+   * exits non-zero). Both are correct: the property under test is only that
+   * no unattended run ever answers "accept".
+   */
+  unattendedElicitation: 'answers-non-accept' | 'errors-without-answering';
 }
 
 export const claudeCode: HostAdapter = {
   name: 'claude-code',
   command: 'claude',
-  headlessArgs: (mcpConfigPath, prompt) => [
+  headlessArgs: (fixture, prompt) => [
     '-p',
     prompt,
     '--mcp-config',
-    mcpConfigPath,
+    fixture.mcpConfigPath,
     '--strict-mcp-config',
     '--allowedTools',
     ALLOWED_TOOLS,
@@ -34,17 +48,51 @@ export const claudeCode: HostAdapter = {
     '--output-format',
     'json',
   ],
-  interactiveArgs: (mcpConfigPath) => [
+  interactiveArgs: (fixture) => [
     '--mcp-config',
-    mcpConfigPath,
+    fixture.mcpConfigPath,
     '--strict-mcp-config',
     '--allowedTools',
     ALLOWED_TOOLS,
   ],
   expectsElicitation: true,
+  unattendedElicitation: 'answers-non-accept',
 };
 
-/** Verified rows only — a host earns its entry by being probed (plan:
- * "unverified rows are candidates, not claims"). Codex CLI, Goose and MCP
- * Inspector are candidates in the plan's client matrix, not yet probed. */
-export const adapters: HostAdapter[] = [claudeCode];
+/** Ollama-backed model for the goose adapter; override to try others. */
+const GOOSE_MODEL = process.env['TNMCP_GOOSE_MODEL'] ?? 'qwen3:4b';
+
+export const goose: HostAdapter = {
+  name: 'goose',
+  command: 'goose',
+  // Needs a running ollama server with the model pulled; `ollama list`
+  // fails when the server is down.
+  available: () => {
+    const list = spawnSync('ollama', ['list'], { encoding: 'utf8' });
+    return list.status === 0 && list.stdout.includes(GOOSE_MODEL.split(':')[0] ?? '');
+  },
+  env: { GOOSE_PROVIDER: 'ollama', GOOSE_MODEL },
+  headlessArgs: (fixture, prompt) => [
+    'run',
+    '--no-profile',
+    '-q',
+    '--max-turns',
+    '8',
+    '--with-extension',
+    fixture.serverCommand,
+    '-t',
+    prompt,
+  ],
+  // Probed 2026-08-10 (goose-cli 1.45.0): advertises elicitation — the
+  // plan's "likely not" guess was wrong — and unattended it fails with
+  // "Elicitation requested but no interactive terminal is available",
+  // exiting 1 without ever answering.
+  expectsElicitation: true,
+  unattendedElicitation: 'errors-without-answering',
+};
+
+export const adapters: HostAdapter[] = [claudeCode, goose];
+
+export function adapterAvailable(adapter: HostAdapter): boolean {
+  return hostOnPath(adapter.command) && (adapter.available?.() ?? true);
+}
