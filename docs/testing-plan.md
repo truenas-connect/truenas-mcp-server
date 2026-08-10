@@ -660,10 +660,14 @@ Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
 goose on `ubuntu-latest`, pulls `qwen3:4b` (cached between runs), builds, and
 runs `test:hosts`. The claude-code adapter is included when the
 `CLAUDE_CODE_OAUTH_TOKEN` repository secret is configured (minted with
-`claude setup-token`; the harness's env scrub deliberately lets it through) at
-roughly $0.30 of model spend per headless run — without the secret the
-install step is skipped and the claude rows skip, degrading the job to
-Ollama-only rather than failing.
+`claude setup-token`; the harness's env scrub deliberately lets it through) —
+without the secret the install step is skipped and the claude rows skip,
+degrading the job to Ollama-only rather than failing. The adapter pins the
+cheapest current model (`claude-haiku-4-5`, $1/$5 per MTok vs the default
+tier's $10/$50; override via `TNMCP_CLAUDE_MODEL`) — the assertions are
+trace-based and model-agnostic, and the session is two explicitly-prompted
+tool calls, so per-run spend is a few cents rather than the ~$0.30 measured
+on the default model.
 
 The nightly covers **both halves** of the phase: goose has an interactive
 adapter too (its TUI renders the elicitation with the plan verbatim, probed

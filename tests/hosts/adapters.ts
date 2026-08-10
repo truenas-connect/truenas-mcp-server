@@ -42,12 +42,19 @@ export interface HostAdapter {
   deterministicUnattendedShape: boolean;
 }
 
+/** Cheapest current Claude model — the tier-3 assertions are trace-based and
+ * model-agnostic, and the session is two explicitly-prompted tool calls, so
+ * the small model carries no assertion risk; override to try others. */
+const CLAUDE_MODEL = process.env['TNMCP_CLAUDE_MODEL'] ?? 'claude-haiku-4-5';
+
 export const claudeCode: HostAdapter = {
   name: 'claude-code',
   command: 'claude',
   headlessArgs: (fixture, prompt) => [
     '-p',
     prompt,
+    '--model',
+    CLAUDE_MODEL,
     '--mcp-config',
     fixture.mcpConfigPath,
     '--strict-mcp-config',
@@ -59,6 +66,8 @@ export const claudeCode: HostAdapter = {
     'json',
   ],
   interactiveArgs: (fixture) => [
+    '--model',
+    CLAUDE_MODEL,
     '--mcp-config',
     fixture.mcpConfigPath,
     '--strict-mcp-config',
