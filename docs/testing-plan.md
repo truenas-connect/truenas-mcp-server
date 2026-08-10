@@ -643,7 +643,7 @@ claims.
 | Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07; interactive render verified 2026-08-08** |
 | MCP Inspector | CLI mode | n/a | not yet probed |
 | Codex CLI | likely | unknown | not installed here |
-| Goose / Ollama-backed (qwen3:4b) | yes | **yes** — errors out unattended, exit 1, never answers | **verified 2026-08-10** |
+| Goose / Ollama-backed (qwen3:4b) | yes | **yes** — fails closed unattended, shape varies (error exit, or error response); never accepts | **verified 2026-08-10** |
 | Claude Desktop, IDE plugins | no | yes | manual only |
 
 The probe that fills a row is the same three steps each time: point the host at

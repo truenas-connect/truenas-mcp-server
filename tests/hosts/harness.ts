@@ -58,8 +58,15 @@ export function setUpFixture(dir: string): FixturePaths {
     mcpConfigPath,
     tracePath,
     auditPath,
-    serverCommand: [process.execPath, ...args].join(' '),
+    // Hosts that take this as one string split it with shell rules, so each
+    // argument is quoted — node's install path or the tmp dir containing a
+    // space must not shear an argument in two.
+    serverCommand: [process.execPath, ...args].map(shellQuote).join(' '),
   };
+}
+
+function shellQuote(arg: string): string {
+  return `'${arg.replaceAll("'", String.raw`'\''`)}'`;
 }
 
 /** The nested-session markers Claude Code sets in child sessions. Scrubbed
@@ -102,6 +109,7 @@ export interface TraceFrame {
     method?: string;
     params?: Record<string, unknown>;
     result?: Record<string, unknown>;
+    error?: Record<string, unknown>;
   };
 }
 
@@ -122,6 +130,26 @@ export function elicitationAnswers(frames: TraceFrame[]): string[] {
     .filter((f) => f.dir === 'recv')
     .map((f) => (f.message.result as { action?: string } | undefined)?.action)
     .filter((action): action is string => action !== undefined);
+}
+
+/**
+ * Per sent elicitation, whether the client's response accepted it. Hosts fail
+ * closed in more than one shape — an `action` of decline/cancel, a JSON-RPC
+ * error response, or no response at all — and every one of those counts as
+ * not-accepted. This is the shape-agnostic form of the tier-3 invariant.
+ */
+export function elicitationAccepts(frames: TraceFrame[]): boolean[] {
+  return frames
+    .filter((f) => f.dir === 'send' && f.message.method === 'elicitation/create')
+    .map((request) => {
+      const response = frames.find(
+        (f) =>
+          f.dir === 'recv' &&
+          f.message.id === request.message.id &&
+          (f.message.result !== undefined || f.message.error !== undefined),
+      );
+      return (response?.message.result as { action?: string } | undefined)?.action === 'accept';
+    });
 }
 
 export function readAudit(auditPath: string): { tool: string; phase: string }[] {

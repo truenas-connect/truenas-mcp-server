@@ -37,10 +37,16 @@ jobs:
         with:
           path: ~/.ollama/models
           key: ollama-qwen3-4b
-      - name: Start ollama and pull the model
+      - name: Wait for ollama and pull the model
         run: |
-          ollama serve &
+          # The Linux installer registers and starts a systemd service, which
+          # is also what persists across steps; only start a server manually
+          # if that didn't happen.
+          if ! ollama list >/dev/null 2>&1; then
+            nohup ollama serve >/dev/null 2>&1 &
+          fi
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
+          ollama list >/dev/null
           ollama pull qwen3:4b
       - name: Install goose
         run: |

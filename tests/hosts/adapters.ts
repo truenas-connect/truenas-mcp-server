@@ -24,12 +24,15 @@ export interface HostAdapter {
   /** What the host's initialize request is expected to advertise. */
   expectsElicitation: boolean;
   /**
-   * How the host fails closed on an unattended elicitation. Claude Code
-   * answers it with action=cancel; goose errors out without answering (and
-   * exits non-zero). Both are correct: the property under test is only that
-   * no unattended run ever answers "accept".
+   * Whether the host reliably exits 0 and answers elicitations with an
+   * explicit action when unattended (Claude Code: action=cancel, exit 0).
+   * When false, the fail-closed shape varies — goose 1.45.0 has been observed
+   * both erroring out with exit 1 and no answer, and answering with a
+   * JSON-RPC error then exiting 0 — so neither exit code nor answer form is
+   * asserted; only the shape-agnostic invariant (no elicitation is ever
+   * accepted, nothing executes, no token appears) is.
    */
-  unattendedElicitation: 'answers-non-accept' | 'errors-without-answering';
+  deterministicUnattendedShape: boolean;
 }
 
 export const claudeCode: HostAdapter = {
@@ -56,7 +59,7 @@ export const claudeCode: HostAdapter = {
     ALLOWED_TOOLS,
   ],
   expectsElicitation: true,
-  unattendedElicitation: 'answers-non-accept',
+  deterministicUnattendedShape: true,
 };
 
 /** Ollama-backed model for the goose adapter; override to try others. */
@@ -68,8 +71,11 @@ export const goose: HostAdapter = {
   // Needs a running ollama server with the model pulled; `ollama list`
   // fails when the server is down.
   available: () => {
+    // Full model string, tag included: a base-name match would report an
+    // overridden-but-unpulled tag as available and fail at runtime instead
+    // of skipping.
     const list = spawnSync('ollama', ['list'], { encoding: 'utf8' });
-    return list.status === 0 && list.stdout.includes(GOOSE_MODEL.split(':')[0] ?? '');
+    return list.status === 0 && list.stdout.includes(GOOSE_MODEL);
   },
   env: { GOOSE_PROVIDER: 'ollama', GOOSE_MODEL },
   headlessArgs: (fixture, prompt) => [
@@ -84,11 +90,10 @@ export const goose: HostAdapter = {
     prompt,
   ],
   // Probed 2026-08-10 (goose-cli 1.45.0): advertises elicitation — the
-  // plan's "likely not" guess was wrong — and unattended it fails with
-  // "Elicitation requested but no interactive terminal is available",
-  // exiting 1 without ever answering.
+  // plan's "likely not" guess was wrong. Unattended it fails closed, but not
+  // always the same way; see deterministicUnattendedShape.
   expectsElicitation: true,
-  unattendedElicitation: 'errors-without-answering',
+  deterministicUnattendedShape: false,
 };
 
 export const adapters: HostAdapter[] = [claudeCode, goose];

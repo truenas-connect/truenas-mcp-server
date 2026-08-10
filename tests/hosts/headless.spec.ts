@@ -6,6 +6,7 @@ import { createDefaultCatalog, Role } from '@truenas/mcp-base';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { adapterAvailable, adapters } from './adapters';
 import {
+  elicitationAccepts,
   elicitationAnswers,
   hostEnv,
   readAudit,
@@ -95,21 +96,17 @@ for (const adapter of adapters) {
       expect(elicit, hostOutput).toBeDefined();
       expect(elicit?.message.params?.['message']).toContain('tank/data@probe');
 
-      // THE tier-3 assertion: unattended, the host never answers accept —
-      // whether it fails closed by answering non-accept or by erroring out
-      // without answering at all.
-      const answers = elicitationAnswers(frames);
-      if (adapter.unattendedElicitation === 'answers-non-accept') {
+      // THE tier-3 assertion, shape-agnostic: every elicitation this session
+      // sent got anything but an accept — a decline/cancel action, a JSON-RPC
+      // error, or no response at all are all fail-closed.
+      const accepts = elicitationAccepts(frames);
+      expect(accepts.length).toBeGreaterThan(0);
+      expect(accepts).not.toContain(true);
+      if (adapter.deterministicUnattendedShape) {
+        // Stronger, where the host is consistent: an explicit non-accept
+        // answer and a clean exit.
         expect(exitCode, hostOutput).toBe(0);
-        expect(answers.length).toBeGreaterThan(0);
-        for (const answer of answers) {
-          expect(answer).not.toBe('accept');
-        }
-      } else {
-        // errors-without-answering: no answer frame ever arrives, and the
-        // host reports the failure through its exit code.
-        expect(answers).toEqual([]);
-        expect(exitCode, hostOutput).not.toBe(0);
+        expect(elicitationAnswers(frames).length).toBeGreaterThan(0);
       }
 
       // And nothing executed and no token leaked: the plan phase was
