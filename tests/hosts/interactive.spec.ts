@@ -109,7 +109,7 @@ for (const adapter of adapters) {
       // an Ollama-backed host on CI CPU can take minutes to get here.
       await until(
         () => JSON.stringify(readTrace(tracePath)).includes('elicitation/create'),
-        480_000,
+        780_000,
       );
       const elicit = readTrace(tracePath).find(
         (f) => f.dir === 'send' && f.message.method === 'elicitation/create',

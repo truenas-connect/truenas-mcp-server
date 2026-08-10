@@ -22,7 +22,10 @@ jobs:
   hosts:
     name: real MCP hosts (goose/Ollama + claude-code)
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # Headroom for the worst case: four tests each bounded by the suite's
+    # 20-minute testTimeout, plus ~6 minutes of setup. Runner minutes are
+    # free on a public repo; a healthy run finishes far sooner.
+    timeout-minutes: 100
     env:
       # Gate only — step-level `if:` cannot reference secrets.* directly, and
       # hoisting the secret itself here would hand it to every step,
@@ -52,7 +55,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-qwen3-4b
+          key: ollama-qwen3-4b-instruct
       - name: Start ollama and pull the model
         run: |
           # The installer starts a systemd service running as the `ollama`
@@ -65,7 +68,7 @@ jobs:
           nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
           ollama list >/dev/null
-          ollama pull qwen3:4b
+          ollama pull qwen3:4b-instruct
       - name: Install goose
         run: |
           curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \

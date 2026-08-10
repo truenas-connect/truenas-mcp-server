@@ -83,8 +83,13 @@ export const claudeCode: HostAdapter = {
   deterministicUnattendedShape: true,
 };
 
-/** Ollama-backed model for the goose adapter; override to try others. */
-const GOOSE_MODEL = process.env['TNMCP_GOOSE_MODEL'] ?? 'qwen3:4b';
+/** Ollama-backed model for the goose adapter; override to try others. The
+ * non-thinking instruct variant is deliberate: the thinking qwen3:4b was
+ * reliable but its reasoning tokens made every call take longer than the
+ * test budgets on CPU-only CI runners (first nightly run timed out before
+ * the first tool call completed); the instruct variant of the same family
+ * went 5/5 locally at seconds per test. */
+const GOOSE_MODEL = process.env['TNMCP_GOOSE_MODEL'] ?? 'qwen3:4b-instruct';
 
 export const goose: HostAdapter = {
   name: 'goose',

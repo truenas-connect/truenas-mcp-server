@@ -54,7 +54,7 @@ for (const adapter of adapters) {
       const err: Buffer[] = [];
       child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
       child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
-      const killer = setTimeout(() => child.kill('SIGKILL'), 540_000);
+      const killer = setTimeout(() => child.kill('SIGKILL'), 840_000);
       const exitCode = await new Promise<number | null>((resolve, reject) => {
         child.on('error', reject);
         child.on('close', (code) => resolve(code));
