@@ -661,9 +661,9 @@ goose on `ubuntu-latest`, pulls `qwen3:4b` (cached between runs), builds, and
 runs `test:hosts`. The claude-code adapter is included when either of the
 workflow's dedicated credential secrets is configured — named for this
 workflow rather than reusing the review workflow's `CLAUDE_API_KEY`, so each
-can be rotated or revoked independently: `TEST_HOSTS_API_KEY` (an
+can be rotated or revoked independently: `TEST_HOSTS_CLAUDE_API_KEY` (an
 Anthropic API key, passed to the CLI as `ANTHROPIC_API_KEY`; per-token
-billing) or `TEST_HOSTS_OAUTH_TOKEN` (minted with `claude setup-token`;
+billing) or `TEST_HOSTS_CLAUDE_OAUTH_TOKEN` (minted with `claude setup-token`;
 bills a claude.ai subscription). The job exports exactly one — the API key
 wins when both exist — so the CLI never sees an ambiguous auth environment.
 Without either secret the install step is skipped and the claude rows skip,
@@ -711,8 +711,8 @@ Carried here so they are not lost; none block tiers 0–2.
 - ~~For tier 3, is there appetite for model API calls in a nightly job, or
   should an Ollama-backed host be the only LLM-driven one?~~ Answered
   2026-08-10: both. The nightly's goose half is Ollama-backed (qwen3:4b, no
-  API spend); the claude-code half runs when `TEST_HOSTS_API_KEY` or
-  `TEST_HOSTS_OAUTH_TOKEN` is present, pinned to `claude-haiku-4-5` at a
+  API spend); the claude-code half runs when `TEST_HOSTS_CLAUDE_API_KEY` or
+  `TEST_HOSTS_CLAUDE_OAUTH_TOKEN` is present, pinned to `claude-haiku-4-5` at a
   few cents per run.
 - Making a real host *answer* `accept` unattended stays out of scope: no
   supported Claude CLI surface reaches it, and an auto-accepting client would

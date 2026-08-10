@@ -31,11 +31,11 @@ jobs:
       # Either credential enables the claude half — both are dedicated to
       # this workflow (deliberately not the review workflow's CLAUDE_API_KEY,
       # so each can be rotated or revoked independently):
-      # TEST_HOSTS_API_KEY (an Anthropic API key; per-token billing) or
-      # TEST_HOSTS_OAUTH_TOKEN (from `claude setup-token`; bills a
+      # TEST_HOSTS_CLAUDE_API_KEY (an Anthropic API key; per-token billing) or
+      # TEST_HOSTS_CLAUDE_OAUTH_TOKEN (from `claude setup-token`; bills a
       # claude.ai subscription). The test step picks the API key when both
       # exist.
-      HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_API_KEY != '' || secrets.TEST_HOSTS_OAUTH_TOKEN != '' }}
+      HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY != '' || secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - run: corepack enable
@@ -82,8 +82,8 @@ jobs:
           echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
       - name: Run host suite
         env:
-          API_KEY: ${{ secrets.TEST_HOSTS_API_KEY }}
-          OAUTH_TOKEN: ${{ secrets.TEST_HOSTS_OAUTH_TOKEN }}
+          API_KEY: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY }}
+          OAUTH_TOKEN: ${{ secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN }}
         run: |
           # Export exactly one credential so the CLI never sees an ambiguous
           # auth environment: prefer the API key, else the OAuth token.
