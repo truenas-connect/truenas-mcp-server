@@ -21,6 +21,13 @@ export interface HostAdapter {
   headlessArgs(fixture: FixturePaths, prompt: string): string[];
   /** argv to launch the interactive TUI; omit for hosts without one. */
   interactiveArgs?(fixture: FixturePaths): string[];
+  /** First-run dialogs that may precede the input box (trust prompts,
+   * telemetry consent). Answered at most once each, only if seen. */
+  startupDialogs?: { pattern: RegExp; response: string }[];
+  /** Screen pattern that means the TUI's input box is ready. */
+  readyPattern?: RegExp;
+  /** Keystrokes declining the rendered elicitation, sent in order. */
+  declineKeys?: string[];
   /** What the host's initialize request is expected to advertise. */
   expectsElicitation: boolean;
   /**
@@ -58,6 +65,11 @@ export const claudeCode: HostAdapter = {
     '--allowedTools',
     ALLOWED_TOOLS,
   ],
+  // In a fresh directory the trust dialog swallows anything typed before it
+  // is answered — the cause of the phase's originally inconclusive probe.
+  startupDialogs: [{ pattern: /trust this folder/i, response: '\r' }],
+  readyPattern: /\? for shortcuts/,
+  declineKeys: ['\x1b'],
   expectsElicitation: true,
   deterministicUnattendedShape: true,
 };
@@ -89,6 +101,18 @@ export const goose: HostAdapter = {
     '-t',
     prompt,
   ],
+  interactiveArgs: (fixture) => [
+    'session',
+    '--no-profile',
+    '--with-extension',
+    fixture.serverCommand,
+  ],
+  // First run shows a telemetry-consent dialog; right-arrow + enter answers
+  // No. The approval prompt is a Yes/No selector defaulting to Yes, declined
+  // the same way (probed 2026-08-10: sends action=decline).
+  startupDialogs: [{ pattern: /Share anonymous usage data/i, response: '\x1b[C\r' }],
+  readyPattern: /goose is ready/,
+  declineKeys: ['\x1b[C', '\r'],
   // Probed 2026-08-10 (goose-cli 1.45.0): advertises elicitation — the
   // plan's "likely not" guess was wrong. Unattended it fails closed, but not
   // always the same way; see deterministicUnattendedShape.

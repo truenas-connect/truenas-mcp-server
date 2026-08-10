@@ -50,15 +50,31 @@ for (const adapter of adapters) {
         env: { ...hostEnv(), ...adapter.env },
         stdio: ['ignore', 'pipe', 'pipe'],
       });
-      const output: Buffer[] = [];
-      child.stdout.on('data', (chunk: Buffer) => output.push(chunk));
-      child.stderr.on('data', (chunk: Buffer) => output.push(chunk));
+      const out: Buffer[] = [];
+      const err: Buffer[] = [];
+      child.stdout.on('data', (chunk: Buffer) => out.push(chunk));
+      child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
       const killer = setTimeout(() => child.kill('SIGKILL'), 540_000);
       const exitCode = await new Promise<number | null>((resolve, reject) => {
         child.on('error', reject);
         child.on('close', (code) => resolve(code));
       }).finally(() => clearTimeout(killer));
-      const hostOutput = Buffer.concat(output).toString().slice(-2000);
+      // Failure context a human can read at a glance: claude's --output-format
+      // json buries the model's text mid-blob between telemetry fields, so
+      // prefer its parsed result; otherwise stderr, where hosts put errors.
+      const stdout = Buffer.concat(out).toString();
+      const stderr = Buffer.concat(err).toString();
+      const hostOutput = ((): string => {
+        try {
+          const parsed = JSON.parse(stdout) as { result?: unknown };
+          if (typeof parsed.result === 'string') {
+            return parsed.result;
+          }
+        } catch {
+          // Not JSON output.
+        }
+        return (stderr.trim() || stdout).slice(0, 2000);
+      })();
 
       const frames = readTrace(fixture.tracePath);
       const recv = (method: string): TraceFrame[] =>

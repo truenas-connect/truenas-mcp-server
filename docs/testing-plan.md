@@ -643,7 +643,7 @@ claims.
 | Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07; interactive render verified 2026-08-08** |
 | MCP Inspector | CLI mode | n/a | not yet probed |
 | Codex CLI | likely | unknown | not installed here |
-| Goose / Ollama-backed (qwen3:4b) | yes | **yes** — fails closed unattended, shape varies (error exit, or error response); never accepts | **verified 2026-08-10** |
+| Goose / Ollama-backed (qwen3:4b) | yes | **yes** — fails closed unattended, shape varies (error exit, or error response); never accepts | **verified 2026-08-10, incl. interactive render** |
 | Claude Desktop, IDE plugins | no | yes | manual only |
 
 The probe that fills a row is the same three steps each time: point the host at
@@ -662,10 +662,14 @@ runs `test:hosts`; the claude-code adapter skips there because the binary is
 absent, and runs wherever a developer has `claude` locally. Adding claude-code
 to the nightly later needs only installing the CLI in the job and providing
 `CLAUDE_CODE_OAUTH_TOKEN` (the harness's env scrub deliberately lets it
-through) at roughly $0.30 per headless run. Two fail-closed shapes are
-asserted per adapter: claude-code answers `cancel`; goose errors out without
-answering and exits non-zero. Both count — the invariant is only that no
-unattended run ever answers `accept`.
+through) at roughly $0.30 per headless run.
+
+The nightly covers **both halves** of the phase: goose has an interactive
+adapter too (its TUI renders the elicitation with the plan verbatim, probed
+2026-08-10), so the human-is-shown-the-plan assertion runs continuously, not
+only where a developer has `claude`. The invariant is asserted
+shape-agnostically per elicitation — whatever the response (a decline/cancel
+action, a JSON-RPC error, or nothing), it must not be an accept.
 
 **Deliberately not covered.** Whether the *model* chooses the right tool. That
 is provider behaviour, not ours, and asserting it would make the suite fail
