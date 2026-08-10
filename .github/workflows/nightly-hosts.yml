@@ -2,10 +2,13 @@ name: Nightly hosts (tier 3)
 
 # Tier 3 of the testing plan: real MCP hosts against the Phase 4 fixture.
 # Nightly and non-blocking by design — a model-driven step can fail for
-# reasons unrelated to the code (docs/testing-plan.md, Phase 5). This job is
-# Ollama-backed (goose + a local model), so it spends no model-API credits;
-# the claude-code adapter simply skips because the binary is not installed
-# here, and runs wherever a developer has `claude` locally.
+# reasons unrelated to the code (docs/testing-plan.md, Phase 5).
+#
+# Two hosts: goose backed by a local Ollama model (no API spend), and
+# claude-code when one of its dedicated credential secrets is configured
+# (pinned to haiku — a few cents of model spend per run). Without a secret,
+# the claude install step is skipped, the binary stays absent, and the claude
+# rows skip — the job degrades to Ollama-only rather than failing.
 
 on:
   schedule:
@@ -17,9 +20,22 @@ permissions:
 
 jobs:
   hosts:
-    name: real MCP hosts (Ollama-backed)
+    name: real MCP hosts (goose/Ollama + claude-code)
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      # Gate only — step-level `if:` cannot reference secrets.* directly, and
+      # hoisting the secret itself here would hand it to every step,
+      # including the curl|bash installers. The real token goes only to the
+      # test step below.
+      # Either credential enables the claude half — both are dedicated to
+      # this workflow (deliberately not the review workflow's CLAUDE_API_KEY,
+      # so each can be rotated or revoked independently):
+      # TEST_HOSTS_CLAUDE_API_KEY (an Anthropic API key; per-token billing) or
+      # TEST_HOSTS_CLAUDE_OAUTH_TOKEN (from `claude setup-token`; bills a
+      # claude.ai subscription). The test step picks the API key when both
+      # exist.
+      HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY != '' || secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - run: corepack enable
@@ -55,4 +71,25 @@ jobs:
           curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \
             | CONFIGURE=false bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - run: yarn test:hosts
+      - name: Install claude-code
+        if: env.HAS_CLAUDE_AUTH == 'true'
+        run: |
+          # ~/.local/bin is already on GITHUB_PATH from the goose step.
+          curl -fsSL https://claude.ai/install.sh | bash
+          # Skip the first-run onboarding wizard (theme picker), which would
+          # otherwise precede the input box; the trust-folder dialog is the
+          # test driver's job, this one is environment setup.
+          echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
+      - name: Run host suite
+        env:
+          API_KEY: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY }}
+          OAUTH_TOKEN: ${{ secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN }}
+        run: |
+          # Export exactly one credential so the CLI never sees an ambiguous
+          # auth environment: prefer the API key, else the OAuth token.
+          if [ -n "$API_KEY" ]; then
+            export ANTHROPIC_API_KEY="$API_KEY"
+          elif [ -n "$OAUTH_TOKEN" ]; then
+            export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN"
+          fi
+          yarn test:hosts
