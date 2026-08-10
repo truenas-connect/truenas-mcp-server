@@ -70,9 +70,10 @@ function shellQuote(arg: string): string {
 }
 
 /** The nested-session markers Claude Code sets in child sessions. Scrubbed
- * by explicit name — never by prefix, because CLAUDE_CODE_OAUTH_TOKEN is a
- * documented headless-auth credential the nightly CI path will need, and a
- * CLAUDE_CODE_* sweep would silently strip it. */
+ * by explicit name — never by prefix: CLAUDE_CODE_OAUTH_TOKEN is a documented
+ * headless-auth credential (the subscription-backed alternative to
+ * ANTHROPIC_API_KEY, which the nightly uses), and a CLAUDE_CODE_* sweep would
+ * silently strip it for anyone authenticating that way. */
 const NESTED_SESSION_MARKERS = new Set([
   'CLAUDECODE',
   'CLAUDE_CODE_ENTRYPOINT',

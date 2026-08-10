@@ -5,10 +5,10 @@ name: Nightly hosts (tier 3)
 # reasons unrelated to the code (docs/testing-plan.md, Phase 5).
 #
 # Two hosts: goose backed by a local Ollama model (no API spend), and
-# claude-code when the CLAUDE_CODE_OAUTH_TOKEN secret is configured (roughly
-# $0.30 of model spend per headless run). Without the secret, the claude
-# install step is skipped, the binary stays absent, and the claude rows
-# skip — the job degrades to Ollama-only rather than failing.
+# claude-code when one of its dedicated credential secrets is configured
+# (pinned to haiku — a few cents of model spend per run). Without a secret,
+# the claude install step is skipped, the binary stays absent, and the claude
+# rows skip — the job degrades to Ollama-only rather than failing.
 
 on:
   schedule:
@@ -28,7 +28,14 @@ jobs:
       # hoisting the secret itself here would hand it to every step,
       # including the curl|bash installers. The real token goes only to the
       # test step below.
-      HAS_CLAUDE_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN != '' }}
+      # Either credential enables the claude half — both are dedicated to
+      # this workflow (deliberately not the review workflow's CLAUDE_API_KEY,
+      # so each can be rotated or revoked independently):
+      # TEST_HOSTS_API_KEY (an Anthropic API key; per-token billing) or
+      # TEST_HOSTS_OAUTH_TOKEN (from `claude setup-token`; bills a
+      # claude.ai subscription). The test step picks the API key when both
+      # exist.
+      HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_API_KEY != '' || secrets.TEST_HOSTS_OAUTH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - run: corepack enable
@@ -65,7 +72,7 @@ jobs:
             | CONFIGURE=false bash
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install claude-code
-        if: env.HAS_CLAUDE_TOKEN == 'true'
+        if: env.HAS_CLAUDE_AUTH == 'true'
         run: |
           # ~/.local/bin is already on GITHUB_PATH from the goose step.
           curl -fsSL https://claude.ai/install.sh | bash
@@ -73,6 +80,16 @@ jobs:
           # otherwise precede the input box; the trust-folder dialog is the
           # test driver's job, this one is environment setup.
           echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
-      - run: yarn test:hosts
+      - name: Run host suite
         env:
-          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          API_KEY: ${{ secrets.TEST_HOSTS_API_KEY }}
+          OAUTH_TOKEN: ${{ secrets.TEST_HOSTS_OAUTH_TOKEN }}
+        run: |
+          # Export exactly one credential so the CLI never sees an ambiguous
+          # auth environment: prefer the API key, else the OAuth token.
+          if [ -n "$API_KEY" ]; then
+            export ANTHROPIC_API_KEY="$API_KEY"
+          elif [ -n "$OAUTH_TOKEN" ]; then
+            export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN"
+          fi
+          yarn test:hosts

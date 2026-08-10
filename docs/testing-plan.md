@@ -658,10 +658,15 @@ installed, is the only LLM-driven option with no per-run cost.
 **Scheduled: `.github/workflows/nightly-hosts.yml`** (decision 2026-08-10:
 Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
 goose on `ubuntu-latest`, pulls `qwen3:4b` (cached between runs), builds, and
-runs `test:hosts`. The claude-code adapter is included when the
-`CLAUDE_CODE_OAUTH_TOKEN` repository secret is configured (minted with
-`claude setup-token`; the harness's env scrub deliberately lets it through) —
-without the secret the install step is skipped and the claude rows skip,
+runs `test:hosts`. The claude-code adapter is included when either of the
+workflow's dedicated credential secrets is configured — named for this
+workflow rather than reusing the review workflow's `CLAUDE_API_KEY`, so each
+can be rotated or revoked independently: `TEST_HOSTS_API_KEY` (an
+Anthropic API key, passed to the CLI as `ANTHROPIC_API_KEY`; per-token
+billing) or `TEST_HOSTS_OAUTH_TOKEN` (minted with `claude setup-token`;
+bills a claude.ai subscription). The job exports exactly one — the API key
+wins when both exist — so the CLI never sees an ambiguous auth environment.
+Without either secret the install step is skipped and the claude rows skip,
 degrading the job to Ollama-only rather than failing. The adapter pins the
 cheapest current model (`claude-haiku-4-5`, $1/$5 per MTok vs the default
 tier's $10/$50; override via `TNMCP_CLAUDE_MODEL`) — the assertions are
@@ -705,9 +710,10 @@ Carried here so they are not lost; none block tiers 0–2.
 - Which TrueNAS versions must be in the tier 4 matrix?
 - ~~For tier 3, is there appetite for model API calls in a nightly job, or
   should an Ollama-backed host be the only LLM-driven one?~~ Answered
-  2026-08-10: the nightly is Ollama-backed (goose + qwen3:4b), spending no
-  API credits; claude-code runs locally where a developer has the CLI, and
-  can be added to the nightly later via `CLAUDE_CODE_OAUTH_TOKEN`.
+  2026-08-10: both. The nightly's goose half is Ollama-backed (qwen3:4b, no
+  API spend); the claude-code half runs when `TEST_HOSTS_API_KEY` or
+  `TEST_HOSTS_OAUTH_TOKEN` is present, pinned to `claude-haiku-4-5` at a
+  few cents per run.
 - Making a real host *answer* `accept` unattended stays out of scope: no
   supported Claude CLI surface reaches it, and an auto-accepting client would
   be ours again. Verifying the human is *shown* the plan is in scope and is
