@@ -643,7 +643,7 @@ claims.
 | Claude Code CLI | yes | yes, cancels headless | **verified 2026-08-07; interactive render verified 2026-08-08** |
 | MCP Inspector | CLI mode | n/a | not yet probed |
 | Codex CLI | likely | unknown | not installed here |
-| Goose / Ollama-backed (qwen3:4b) | yes | **yes** — fails closed unattended, shape varies (error exit, or error response); never accepts | **verified 2026-08-10, incl. interactive render** |
+| Goose / Ollama-backed (qwen3:4b-instruct) | yes | **yes** — fails closed unattended, shape varies (error exit, or error response); never accepts | **verified 2026-08-10, incl. interactive render** |
 | Claude Desktop, IDE plugins | no | yes | manual only |
 
 The probe that fills a row is the same three steps each time: point the host at
@@ -657,7 +657,7 @@ installed, is the only LLM-driven option with no per-run cost.
 
 **Scheduled: `.github/workflows/nightly-hosts.yml`** (decision 2026-08-10:
 Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
-goose on `ubuntu-latest`, pulls `qwen3:4b` (cached between runs), builds, and
+goose on `ubuntu-latest`, pulls `qwen3:4b-instruct` (cached between runs), builds, and
 runs `test:hosts`. The claude-code adapter is included when either of the
 workflow's dedicated credential secrets is configured — named for this
 workflow rather than reusing the review workflow's `CLAUDE_API_KEY`, so each
@@ -710,7 +710,8 @@ Carried here so they are not lost; none block tiers 0–2.
 - Which TrueNAS versions must be in the tier 4 matrix?
 - ~~For tier 3, is there appetite for model API calls in a nightly job, or
   should an Ollama-backed host be the only LLM-driven one?~~ Answered
-  2026-08-10: both. The nightly's goose half is Ollama-backed (qwen3:4b, no
+  2026-08-10: both. The nightly's goose half is Ollama-backed
+  (qwen3:4b-instruct, no
   API spend); the claude-code half runs when `TEST_HOSTS_CLAUDE_API_KEY` or
   `TEST_HOSTS_CLAUDE_OAUTH_TOKEN` is present, pinned to `claude-haiku-4-5` at a
   few cents per run.

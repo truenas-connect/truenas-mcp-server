@@ -15,8 +15,9 @@ export default defineConfig({
     // model rate limits and PTY resources.
     fileParallelism: false,
     // Generous: nightly CI runs an Ollama model on CPU, where a session that
-    // takes 15s locally can take minutes.
-    testTimeout: 600_000,
+    // takes seconds locally can take minutes (the first dispatch run proved
+    // it — a thinking model blew every budget before its first tool call).
+    testTimeout: 900_000,
     hookTimeout: 60_000,
   },
 });
