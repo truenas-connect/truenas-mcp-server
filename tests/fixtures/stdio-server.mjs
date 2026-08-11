@@ -24,7 +24,21 @@ const config = loadConfig(values.config);
 function fakeClient() {
   return {
     api: {
+      // Plain verbs. The query verbs are NOT here — since api-client 2.0.0 the
+      // tools reach those through the query helpers below, which return the
+      // list directly instead of the union `call` yields.
       call(method, params) {
+        switch (method) {
+          case 'system.info':
+            return of({ hostname: 'nas-a', version: 'TrueNAS-25.10.0' });
+          case 'pool.snapshot.create':
+            return of({ name: `${params?.dataset}@${params?.name}` });
+          default:
+            throw new Error(`fixture: unexpected api call "${method}"`);
+        }
+      },
+      // api.query(method, filters?, options?) — always resolves to a list.
+      query(method) {
         switch (method) {
           case 'pool.query':
             return of([
@@ -34,10 +48,8 @@ function fakeClient() {
             return of([
               { id: 'tank/data', pool: 'tank', type: 'FILESYSTEM', mountpoint: '/mnt/tank/data' },
             ]);
-          case 'pool.snapshot.create':
-            return of({ name: `${params?.[0]?.dataset}@${params?.[0]?.name}` });
           default:
-            throw new Error(`fixture: unexpected api call "${method}"`);
+            throw new Error(`fixture: unexpected api query "${method}"`);
         }
       },
     },
