@@ -1,13 +1,14 @@
-# Testing plan — tiers 0–2
+# Testing plan — tiers 0–3
 
-**Status:** working document, last updated 2026-08-05. Temporary. It exists so
+**Status:** working document, last updated 2026-08-12. Temporary. It exists so
 the tier model and the phase breakdown are reviewable in one place; fold it into
-permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
+permanent documentation once tier 4 has a home.
 
-**Progress: tiers 0–2 are complete.** Phases 0, 1 and 1b (server#7,
-server#9, base#5, base#6), Phase 2 (server#11), Phase 3 (server#13) and
-Phase 4 (server#15) have all landed. **Phase 5 — tier 3, real MCP hosts — is
-specified below and unblocked.** Tier 4 still needs a home.
+**Progress: tiers 0–3 are complete.** Phases 0, 1 and 1b (server#7,
+server#9, base#5, base#6), Phase 2 (server#11), Phase 3 (server#13),
+Phase 4 (server#15) and Phase 5 (server#17, server#18, server#19) have all
+landed. **Phase 6 — multi-system coverage at tiers 2 and 3 — is specified
+below and unblocked.** Tier 4 still needs a home.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -79,6 +80,34 @@ two suites under `tests/`, both run by `yarn test:dist` after `yarn build`:
   exported `runServer` from `dist/` with a substituted `ClientFactory`
   (the Phase 2 seam), driven by the MCP SDK `Client`, plus a raw-pipe test
   auditing that stdout carries nothing but JSON-RPC frames.
+
+### Tier 3 — complete
+
+`tests/hosts/` (Phase 5), run by `yarn test:hosts`, nightly and
+non-blocking: a host-agnostic core (`harness.ts`) plus thin per-host adapters
+(`adapters.ts`), with `headless.spec.ts` and `interactive.spec.ts` asserting
+against our own `--trace` and audit JSONL. Claude Code and goose/Ollama are
+both verified, headless and interactive.
+
+### Multi-system — covered at tiers 0 and 1, not above
+
+Recorded here because it reads as a gap and mostly is not one. Fan-out is
+covered where the logic lives:
+
+- **tier 0**, base — `fanout.spec.ts` (partial failure, `errname`/`errno`
+  extraction) and `system-registry.spec.ts` (`all` / list / single / omitted,
+  dedupe so `["a","a"]` cannot execute twice, `all` reserved as a name, the
+  ambiguous-selector error).
+- **tier 1**, server — `server.spec.ts` registers two systems and exercises
+  them throughout: per-system fan-out results, `execute` called once per
+  system, partial *plan* failure via `planFailsOn`, and the token binding only
+  the successfully-planned subset so the confirm call must narrow `systems`
+  to match.
+
+What is *not* covered is tiers 2 and 3, where every fixture registers exactly
+one system (`nas-a`). Both call `systems: "all"`, but against N=1 — the
+degenerate case, which looks like fan-out coverage in the source and is not.
+Phase 6 closes that.
 
 ## Coverage policy
 
@@ -235,12 +264,13 @@ Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
           ->  Phase 1b  (base:   raises the floors Phase 0 recorded)   DONE
 Phase 2   ->  Phase 3                                                  DONE
           ->  Phase 4                                                  DONE
-Phase 4   ->  Phase 5   (tier 3: real MCP hosts)                       TODO
+Phase 4   ->  Phase 5   (tier 3: real MCP hosts)                       DONE
+Phase 5   ->  Phase 6   (multi-system at tiers 2 and 3)                TODO
 ```
 
-Phases 0 through 4 have landed — their sections below are kept as the record
+Phases 0 through 5 have landed — their sections below are kept as the record
 of what was decided and why, since the rationale still governs how the floors
-are maintained. **Phase 5 is the next piece of work**, and needs no tier-4
+are maintained. **Phase 6 is the next piece of work**, and needs no tier-4
 infrastructure to start.
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
@@ -448,7 +478,7 @@ regressions — none of which `tsx`-on-source can see.
 value one — stray stdout writes silently break every MCP client at once, and
 nothing checks for it today.
 
-### Phase 5 — real MCP hosts (tier 3) *(next)*
+### Phase 5 — real MCP hosts (tier 3) *(landed: server#17, server#18, server#19)*
 
 Unblocked and **independent of tier 4**: Phase 4's fixture runs `runServer`
 with a substituted `ClientFactory`, so a real host can drive a real server
@@ -685,6 +715,100 @@ action, a JSON-RPC error, or nothing), it must not be an accept.
 is provider behaviour, not ours, and asserting it would make the suite fail
 whenever a model updates.
 
+### Phase 6 — multi-system at tiers 2 and 3 *(next)*
+
+Raised 2026-08-11: the MCP is meant to drive several TrueNAS boxes, and the
+tiers that touch real stdio and real hosts have only ever seen one.
+
+**Why N=2 is not "the same test, bigger".** Everything about fan-out that is
+*logic* is already asserted at tiers 0 and 1 (see "Multi-system" above), and
+Phase 6 must not restate it. What N=1 structurally cannot reach is the same
+thing tiers 2 and 3 exist for in general:
+
+```
+tier 2   a multi-system result crosses REAL STDIO and survives serialization
+tier 3   a multi-system plan is RENDERED TO A HUMAN intact, before approval
+```
+
+The tier 3 half is the load-bearing one, and it is a real risk rather than a
+box-ticking exercise. `renderPlan` (`src/gate.ts:6`) emits `Target systems: a,
+b` plus one `- [system]` line per planned call, and the whole fan-out goes out
+as **one** elicitation. A two-system plan is therefore several times longer
+than the single-system plan we assert on today. Hosts render elicitation
+prompts in a fixed-size TUI box; a host that truncates, scrolls away or
+summarises the tail would show the user a plan that names fewer systems than
+the token binds. The user then approves less than what runs — the same
+"what you approved is what runs" property Phase 5 protects, failing at a
+length the current fixture never produces.
+
+**Deliverables**
+
+- `tests/fixtures/stdio-server.mjs` — make the fake client per-system. Base's
+  `ClientFactory` is already `(spec: SystemSpec) => Promise<…>`
+  (`system-registry.ts:114`) and the fixture simply ignores the argument
+  today, so this is a signature change and no new seam: `fakeClient(spec.name)`,
+  with responses keyed by system name and one system configured to *fail* a
+  chosen call. Divergent behaviour is the point — two identical fakes would
+  prove only that the loop runs twice.
+- `tests/stdio.spec.ts` — register two systems and assert over real stdio:
+  a read-only `systems: "all"` returns one result per system in registry
+  order, with the erroring system present as a structured `ERROR` entry
+  rather than a failed call; a mutating call's plan text names both; and the
+  approval path is completed — approve (or confirm with the fallback token)
+  and assert one execute result per system. That last call finally reaches
+  the fixture's `pool.snapshot.create` handler, parked since Phase 4 behind
+  a comment reserving it "for a future approval-path test" — without it, no
+  mutating fan-out *execution* ever crosses real stdio, only plans do.
+- `tests/hosts/harness.ts` — `setUpFixture` writes two systems. `SESSION_PROMPT`
+  already asks for `systems: "all"`, so no prompt change is needed, which keeps
+  the model's job identical to today's.
+- `tests/hosts/interactive.spec.ts` — extend the existing render assertion:
+  today it takes the dataset and operation from our own elicitation frame and
+  requires them on screen (`:118`, `:131`). With two systems it must
+  additionally require **every system name the plan targets** to appear, still
+  read from the frame and never hard-coded. "Appear" means: in the terminal
+  text at some point before the approve/decline keys are sent, accumulated
+  across polls — not all in one snapshot. A fixed-size box that *scrolls* a
+  long plan still showed it to the human and passes; what fails is a name
+  that never reaches the screen at all — the truncate-or-summarise host this
+  phase exists to catch. This is a deliberate semantic choice, recorded here
+  so the assertion is not "fixed" into a single-snapshot check later.
+- `tests/hosts/headless.spec.ts` — unchanged in intent; `elicitationAccepts`
+  is already per-elicitation (`harness.ts:142`), so the never-accepts
+  invariant generalises without edit. Confirm it, do not rewrite it.
+
+**Acceptance**
+
+- Tier 2 fails if a per-system error is raised as a call failure instead of
+  appearing as an `ERROR` entry alongside the healthy system's result.
+- Tier 3 interactive fails if a system named in the plan does not reach the
+  screen — verified deliberately by asserting a system name the plan does
+  *not* target must be absent, so the check cannot pass on a substring
+  accident. Because the prompt says `systems: "all"`, every registered name
+  is targeted and the control name is necessarily unregistered; for the
+  control to bite it must be shaped like the real names (`nas-c` against
+  `nas-a`/`nas-b`), and no real name may be a prefix of another, or the
+  positive checks inherit the same substring problem in reverse.
+- N=1 stays a *tested* configuration, not a promise. Tier 2 keeps at least
+  one test running against a one-system config in CI — the suite writes its
+  own config per test, so this costs nothing. At tier 3 a second nightly run
+  per count is not worth the budget; instead nothing in the specs may
+  hard-code N=2 — every per-system assertion iterates over names read from
+  the config or the frames — so reverting `setUpFixture` to one system is a
+  one-line local check.
+
+**Budget.** The tier 3 timeouts were sized against single-system runs on a
+CPU-bound Ollama host that already needs minutes per step. A two-system
+fixture means a longer plan for the host to render and a slower session
+end-to-end, so re-check the interactive budgets in the same PR rather than
+letting the first nightly discover them by timing out.
+
+**Not in this phase.** Operations *between* systems — replication A→B,
+cross-fleet config comparison — are a design question, not a test gap:
+`ToolContext` is `{ system }` (base `catalog/tool.ts:24`) and fan-out only
+expresses *the same operation on many systems*. Recorded as an open question
+below rather than solved here.
+
 ## Deferred
 
 **CD is out of scope** while this is a prototype, revisited once tiers 0–2 have
@@ -720,3 +844,29 @@ Carried here so they are not lost; none block tiers 0–2.
   be ours again. Verifying the human is *shown* the plan is in scope and is
   the interactive half of Phase 5 — its probe is settled (see Probe status)
   and the assertion is implemented in `tests/hosts/interactive.spec.ts`.
+
+## Open questions — multi-system design
+
+Raised 2026-08-11 alongside Phase 6. These are design decisions, not test
+gaps; Phase 6 does not depend on any of them, but the answers would change
+what a later phase has to cover.
+
+- **Operations between systems.** Fan-out expresses *the same operation on
+  many systems* and cannot express one *across* them — replication A→B, "which
+  boxes are behind", cross-fleet config comparison. Those need two systems
+  holding different roles in a single call, which `ToolContext` has no shape
+  for. If they are on the roadmap, the answer is a second context type
+  (`{ source, target }`) with its own plan/confirm binding — deliberately not
+  tool-to-tool chaining, which would force the confirmation key
+  (`executor.ts:163`/`:197`) to be re-derived at every level and stop
+  "what you approved is what runs" being checkable.
+- **Fan-out concurrency.** `fanOut` is `Promise.all`, so a mutating operation
+  reaches every system at once. There is no serial mode and no
+  abort-on-first-failure. Defensible at today's scale; worth revisiting before
+  anyone points this at a large fleet.
+- **The all-or-nothing mutating role gate** (`executor.ts:136`): one system
+  whose credential lacks the role fails the entire call. That is the safe
+  default — executing on a silently reduced target set would run something
+  other than what was approved — but at fleet scale the alternative
+  (plan only the permitted systems, name the excluded ones in the plan) may be
+  worth having.
