@@ -89,13 +89,18 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
   });
   const client = new Client({ name: 'tier2-suite', version: '0.0.0' }, {});
   await client.connect(transport);
+  // Drain stderr so a chatty child can never stall on a full pipe; the
+  // tests using this helper assert nothing on it.
+  transport.stderr?.on('data', () => {});
   return { client, close: () => client.close() };
 }
 
-/** The JSON results array out of a tool result's text body. */
+/** The JSON results array out of a tool result's text body: the whole text,
+ * or everything after the prefix line — never "the first [", which would
+ * silently couple parsing to the prefix prose staying bracket-free. */
 function parseResults(result: CallToolResult): unknown {
-  const body = result.content[0] as { type: 'text'; text: string };
-  return JSON.parse(body.text.slice(body.text.indexOf('[')));
+  const text = (result.content[0] as { type: 'text'; text: string }).text;
+  return JSON.parse(text.startsWith('[') ? text : text.slice(text.indexOf('\n[') + 1));
 }
 
 function collect(stream: Stream | null): { text(): string } {
@@ -228,6 +233,11 @@ describe('multi-system fan-out', () => {
       // One system down is data, not a failed call — raising it as a call
       // failure would throw away the healthy system's answer.
       expect(result.isError).toBeUndefined();
+      // errname/errno below are fabricated by the fixture: the real
+      // api-client currently flattens API failures to a plain message before
+      // they reach the core (both arrive null in production). This asserts
+      // the transport preserves them when present — not that production
+      // populates them.
       expect(parseResults(result)).toEqual([
         {
           system: 'nas-a',

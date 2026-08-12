@@ -30,9 +30,11 @@ export const ALLOWED_TOOLS = 'mcp__truenas__storage_pool_status,mcp__truenas__sn
  * while never being registered. */
 export const FIXTURE_SYSTEMS = ['nas-a', 'nas-b'];
 
-/** Negative control for the tier-3 render assertion: shaped like a real
- * system name, never registered, so it can only appear on screen if the
- * check itself is broken. */
+/** Shape control for the tier-3 render assertion: named like a real system,
+ * never registered, so it can only appear on screen if a positive check
+ * matches on a substring accident. The stronger control — a system that IS
+ * registered but absent from the plan — lives in interactive.spec.ts's
+ * narrowed-plan scenario. */
 export const ABSENT_SYSTEM = 'nas-c';
 
 export interface FixturePaths {
