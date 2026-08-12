@@ -1,8 +1,8 @@
 name: Nightly hosts (tier 3)
 
-# Tier 3 of the testing plan: real MCP hosts against the Phase 4 fixture.
+# Tier 3 of the testing plan: real MCP hosts against the tier-2 fixture.
 # Nightly and non-blocking by design — a model-driven step can fail for
-# reasons unrelated to the code (docs/testing-plan.md, Phase 5).
+# reasons unrelated to the code.
 #
 # Two hosts: goose backed by a local Ollama model (no API spend), and
 # claude-code when one of its dedicated credential secrets is configured
@@ -22,10 +22,15 @@ jobs:
   hosts:
     name: real MCP hosts (goose/Ollama + claude-code)
     runs-on: ubuntu-latest
-    # Headroom for the worst case: four tests each bounded by the suite's
-    # 20-minute testTimeout, plus ~6 minutes of setup. Runner minutes are
-    # free on a public repo; a healthy run finishes far sooner.
-    timeout-minutes: 100
+    # Headroom for the worst case: six tests, each bounded by the suite's
+    # 20-minute testTimeout and run strictly in sequence (fileParallelism:
+    # false), plus ~6 minutes of setup — 6 x 20 + 6 = 126. The margin above
+    # that exists so a slow run fails on a per-test diagnostic assertion,
+    # never an opaque job-level kill with nothing to read. This number grows
+    # with the test count: raise it alongside vitest.hosts.config.ts, whose
+    # comment carries the per-test arithmetic. Runner minutes are free on a
+    # public repo; a healthy run finishes far sooner.
+    timeout-minutes: 140
     env:
       # Gate only — step-level `if:` cannot reference secrets.* directly, and
       # hoisting the secret itself here would hand it to every step,
@@ -47,7 +52,7 @@ jobs:
           node-version: 22
           cache: yarn
       - run: yarn install --immutable
-      # The suite drives the Phase 4 fixture from dist/.
+      # The suite drives the tier-2 fixture from dist/.
       - run: yarn build
       - name: Install ollama
         run: curl -fsSL https://ollama.com/install.sh | sh

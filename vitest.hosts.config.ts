@@ -22,6 +22,10 @@ export default defineConfig({
     // a slow run fails on the diagnostic assertion, not a generic timeout.
     // The render wait is 120s because a two-system plan is a longer
     // elicitation for the host to lay out and scroll through.
+    // The job-level guard scales with the test count: tests run strictly in
+    // sequence (fileParallelism below), so nightly-hosts.yml's
+    // timeout-minutes must exceed (number of tests) x this testTimeout plus
+    // setup — raise both together when adding a scenario.
     testTimeout: 1_200_000,
     hookTimeout: 60_000,
   },
