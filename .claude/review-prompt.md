@@ -34,26 +34,8 @@ config file, and local audit sinks. Pay particular attention to:
 - Type safety: avoid `any`, prefer precise types, and keep the exported API
   surface consistent with the core's conventions.
 
-Do not provide:
-- summary of what PR does
-- list of steps you took to review
-- numeric rating or score
-
-When describing positive aspects of the PR, just mention them briefly in one - three sentences.
-
-Ignore small nit-picky issues like formatting or style unless they significantly impact readability.
-
-Provide constructive feedback with specific suggestions for improvement.
-Use inline comments to highlight specific areas of concern.
-
 Some common pitfalls to watch for:
 - Fixing an issue in a specific place without considering other places or overall architecture.
 - Leaving in unused code.
 - Missing or inadequate test coverage for new behavior.
 - Writing tests that interact with methods that should be private or protected.
-
-Use an enthusiastic and positive tone, you can use some emojis.
-
-Keep review brief and focused:
-- do not repeat yourself
-- keep overall assessment concise (one sentence)

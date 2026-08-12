@@ -53,15 +53,24 @@ jobs:
           # and delete-on-merge is only the usual follow-up. Ask the PR's
           # state rather than comparing history — a squash or rebase merge
           # rewrites the branch's SHAs, so a compare would report the branch
-          # as ahead forever.
-          merged=$(gh api "repos/iXsystems/ux-github-workflows/commits/refs%2Fheads%2F$branch/pulls" \
+          # as ahead forever. The ref is fully percent-encoded (the slash in
+          # the branch name too): {ref} is a single path segment, documented
+          # as a SHA or heads/BRANCH.
+          merged=$(gh api "repos/iXsystems/ux-github-workflows/commits/heads%2F${branch//\//%2F}/pulls" \
             -q 'any(.base.ref == "master" and .merged_at != null)') || merged=''
           if [ "$merged" = "true" ]; then
             echo "::error::iXsystems/ux-github-workflows@$branch is merged into master — the temporary pin is due for removal."
             echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this job."
             exit 1
           elif [ -z "$merged" ]; then
-            echo "::warning::could not read the merge state of ux-github-workflows@$branch; skipping the merged-pin check."
+            # Fail closed, unlike the ls-remote leg: that one can tell "no
+            # such ref" from "could not reach" and only skips on the latter,
+            # while this catch-all cannot tell a permanent 404 from a blip —
+            # and a ::warning:: inside a green job is invisible at the one
+            # moment this guard exists for. A guard that cannot answer its
+            # question has not answered it.
+            echo "::error::could not read the merge state of ux-github-workflows@$branch — the temporary pin cannot be verified."
+            exit 1
           fi
 
   verify:
