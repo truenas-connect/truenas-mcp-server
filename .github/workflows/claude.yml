@@ -31,7 +31,8 @@ name: Claude Review
 # ref (the workflow cannot derive its own ref, see its tooling-ref
 # description). Once merged, point both at @master and drop the `with:`
 # block. Not enforced by this comment alone: a blocking step in ci.yml fails
-# the build the moment these refs name a branch that no longer exists.
+# the build while either ref (the `uses:` pin or the bare tooling-ref value)
+# still names the branch after it is fully merged or gone.
 
 on:
   pull_request:
