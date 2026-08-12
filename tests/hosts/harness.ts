@@ -4,8 +4,8 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * Shared, host-agnostic core of the tier-3 harness (testing-plan Phase 5).
- * The server under test is always the Phase 4 fixture (real runServer from
+ * Shared, host-agnostic core of the tier-3 harness.
+ * The server under test is always the tier-2 fixture (real runServer from
  * dist/, fake ClientFactory), and every assertion reads our server's --trace
  * or audit JSONL — never model prose, which differs run to run while the
  * frame sequence stays identical.
@@ -22,6 +22,18 @@ export const SESSION_PROMPT =
   'with dataset "tank/data", name "probe", systems "all".';
 
 export const ALLOWED_TOOLS = 'mcp__truenas__storage_pool_status,mcp__truenas__snapshots_create';
+
+/** Registered fixture systems, in config (and therefore registry) order.
+ * Two, so tier-3 sessions exercise a real fan-out. Naming constraints: no
+ * name may be a prefix of another — the screen assertions are substring
+ * checks in both directions — and ABSENT_SYSTEM must stay shaped like these
+ * while never being registered. */
+export const FIXTURE_SYSTEMS = ['nas-a', 'nas-b'];
+
+/** Negative control for the tier-3 render assertion: shaped like a real
+ * system name, never registered, so it can only appear on screen if the
+ * check itself is broken. */
+export const ABSENT_SYSTEM = 'nas-c';
 
 export interface FixturePaths {
   mcpConfigPath: string;
@@ -42,7 +54,12 @@ export function setUpFixture(dir: string): FixturePaths {
   writeFileSync(
     configPath,
     JSON.stringify({
-      systems: [{ name: 'nas-a', host: '192.0.2.1', username: 'u', apiKey: 'k' }],
+      systems: FIXTURE_SYSTEMS.map((name) => ({
+        name,
+        host: '192.0.2.1',
+        username: 'u',
+        apiKey: 'k',
+      })),
       auditLog: auditPath,
     }),
     { mode: 0o600 },

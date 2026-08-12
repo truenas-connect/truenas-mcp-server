@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
-// Tier-2 suite (testing-plan Phases 3-4): runs against dist/, so it must run
+// Tier-2 suite: runs against dist/, so it must run
 // AFTER `yarn build`. CI orders it that way, and the suite fails fast with a
 // clear message when the artifact is missing. Kept out of vitest.config.ts so
 // plain `yarn test` (tiers 0-1, pre-build) never touches it, and carries no

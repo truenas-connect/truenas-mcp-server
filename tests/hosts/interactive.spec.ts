@@ -6,6 +6,7 @@ import { spawn as ptySpawn, type IPty } from 'node-pty';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { adapterAvailable, adapters } from './adapters';
 import {
+  ABSENT_SYSTEM,
   elicitationAccepts,
   elicitationAnswers,
   hostEnv,
@@ -16,7 +17,7 @@ import {
 } from './harness';
 
 /**
- * Tier 3, interactive (testing-plan Phase 5): proves the human is actually
+ * Tier 3, interactive: proves the human is actually
  * SHOWN the plan. Every lower tier stops at the wire; a host could answer the
  * protocol perfectly and render nothing useful, and the gate would be
  * technically satisfied and practically defeated. The host's output goes
@@ -25,7 +26,7 @@ import {
  * from the elicitation frame in our own trace, never hard-coded against TUI
  * chrome.
  *
- * Probe history (2026-08-07, settled 2026-08-08): the phase's originally
+ * Probe history (2026-08-07, settled 2026-08-08): this suite's originally
  * inconclusive probe died before tools/call because hosts render first-run
  * dialogs (Claude Code's trust-folder prompt, goose's telemetry consent)
  * before the input box exists — anything typed earlier lands in the dialog.
@@ -117,19 +118,37 @@ for (const adapter of adapters) {
       expect(elicit, 'server never sent elicitation/create').toBeDefined();
       const planMessage = elicit?.message.params?.['message'] as string;
 
-      // The string the human must see, taken from the plan we generated: the
-      // snapshot id. Deliberately not the full prose line — the model chooses
-      // the snapshot name, and pinning its exact wording would fail on a
-      // paraphrase rather than on the thing under test (that the human is
-      // shown what will change). The tool name is the one stable literal.
+      // The strings the human must see, taken from the plan we generated:
+      // the snapshot id, the tool name, and every system the plan targets —
+      // read from the frame, never hard-coded, so the assertion follows the
+      // fixture at any N. Deliberately not the full prose lines — the model
+      // chooses the snapshot name, and pinning its exact wording would fail
+      // on a paraphrase rather than on the thing under test (that the human
+      // is shown what will change).
       const snapshotId = /"([^"]+@[^"]+)"/.exec(planMessage)?.[1];
       expect(snapshotId).toMatch(/^tank\/data@/);
+      const targets = /^Target systems: (.+)$/m.exec(planMessage)?.[1]?.split(', ') ?? [];
+      expect(targets.length, planMessage).toBeGreaterThan(0);
 
-      // The rendered screen shows them before any approval happens.
-      await until(() => screenText().includes(snapshotId as string), 60_000);
-      const screen = screenText();
-      expect(screen).toContain(snapshotId as string);
-      expect(screen).toContain('snapshots_create');
+      // Deliberate semantics — do not "fix" this into a single-snapshot
+      // check: each string must appear in the terminal text at some point
+      // before approval, accumulated across polls. A fixed-size box that
+      // scrolls a long plan still showed it to the human and passes; a host
+      // that truncates or summarises the tail never renders the name at all
+      // and fails here.
+      const rendered = [snapshotId as string, 'snapshots_create', ...targets];
+      let seen = '';
+      await until(() => {
+        seen += `\n${screenText()}`;
+        return rendered.every((needle) => seen.includes(needle));
+      }, 120_000);
+      for (const needle of rendered) {
+        expect(seen, `never rendered: ${needle}`).toContain(needle);
+      }
+      // The negative control: a system name the plan does not target must
+      // never have appeared, so the checks above cannot pass on a substring
+      // accident.
+      expect(seen).not.toContain(ABSENT_SYSTEM);
 
       // Decline; the answer must be a non-accept and nothing executes.
       for (const key of declineKeys) {

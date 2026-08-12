@@ -217,7 +217,7 @@ describe('tools/call — read-only', () => {
 });
 
 describe('conformance matrix — {elicitation, none} × {requireElicitation unset, true, false}', () => {
-  // Every cell of the matrix has an explicit test here (testing-plan Phase 1).
+  // Every cell of the matrix has an explicit test here.
   // Path details beyond the cell's core behavior (decline, timeout, partial
   // planning, audit, drift) live in the per-path describes below.
   describe('mutating calls', () => {

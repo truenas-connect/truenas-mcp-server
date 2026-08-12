@@ -7,7 +7,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 /**
- * Tier 2a (testing-plan Phase 3): the shipped artifact, not the sources.
+ * Tier 2a: the shipped artifact, not the sources.
  * Everything here spawns `dist/cli.js` directly or inspects the packaged
  * output — catching shebang loss, `bin` mapping errors, `files: ["dist"]`
  * gaps and tsup config regressions, none of which tsx-on-source can see.

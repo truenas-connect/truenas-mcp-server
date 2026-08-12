@@ -10,9 +10,9 @@ import { LATEST_PROTOCOL_VERSION, type CallToolResult } from '@modelcontextproto
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 /**
- * Tier 2b (testing-plan Phase 4): a real MCP session, over real stdio pipes,
- * against the built artifact. The fixture runs the exported runServer from
- * dist/ with only the ClientFactory substituted (the Phase 2 seam), so the
+ * Tier 2b: a real MCP session, over real stdio pipes, against the built
+ * artifact. The fixture runs the exported runServer from
+ * dist/ with only the ClientFactory substituted (its injectable seam), so the
  * wiring under test — credential provider, registry, gate, audit, trace — is
  * exactly what the production binary runs.
  */
@@ -47,18 +47,55 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function writeConfig(): { configPath: string; auditPath: string } {
+interface ConfigOptions {
+  /** Registered systems, in config (and therefore registry) order. The
+   * default stays N=1 so single-system coverage remains in CI — a tested
+   * configuration, not a promise. */
+  systems?: string[];
+  requireElicitation?: boolean;
+}
+
+function writeConfig(options: ConfigOptions = {}): { configPath: string; auditPath: string } {
   const configPath = join(dir, 'config.json');
   const auditPath = join(dir, 'audit.jsonl');
   writeFileSync(
     configPath,
     JSON.stringify({
-      systems: [{ name: 'nas-a', host: '192.0.2.1', username: 'u', apiKey: 'k' }],
+      systems: (options.systems ?? ['nas-a']).map((name) => ({
+        name,
+        host: '192.0.2.1',
+        username: 'u',
+        apiKey: 'k',
+      })),
       auditLog: auditPath,
+      ...(options.requireElicitation !== undefined
+        ? { requireElicitation: options.requireElicitation }
+        : {}),
     }),
     { mode: 0o600 },
   );
   return { configPath, auditPath };
+}
+
+/** Connects an SDK client to a freshly spawned fixture; close() ends the
+ * session and the child. The session e2e test below keeps its hand-rolled
+ * transport because it exercises SIGTERM shutdown and reads stderr. */
+async function connectSession(args: string[]): Promise<{ client: Client; close(): Promise<void> }> {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [fixture, ...args],
+    env: childEnv(),
+    stderr: 'pipe',
+  });
+  const client = new Client({ name: 'tier2-suite', version: '0.0.0' }, {});
+  await client.connect(transport);
+  return { client, close: () => client.close() };
+}
+
+/** The JSON results array out of a tool result's text body. */
+function parseResults(result: CallToolResult): unknown {
+  const body = result.content[0] as { type: 'text'; text: string };
+  return JSON.parse(body.text.slice(body.text.indexOf('[')));
 }
 
 function collect(stream: Stream | null): { text(): string } {
@@ -176,6 +213,101 @@ describe('stdio session (SDK-driven)', () => {
     const events = audit.map((line) => JSON.parse(line) as { tool: string; phase: string });
     expect(events.some((e) => e.tool === 'storage_pool_status' && e.phase === 'read')).toBe(true);
     expect(events.some((e) => e.tool === 'snapshots_create' && e.phase === 'plan')).toBe(true);
+  }, 30_000);
+});
+
+describe('multi-system fan-out', () => {
+  it('partial fan-out failure crosses stdio as data: per-system entries in registry order, ERROR alongside SUCCESS', async () => {
+    const { configPath } = writeConfig({ systems: ['nas-a', 'nas-b'] });
+    const session = await connectSession(['--config', configPath, '--fail-pool-query', 'nas-b']);
+    try {
+      const result = (await session.client.callTool({
+        name: 'storage_pool_status',
+        arguments: { systems: 'all' },
+      })) as CallToolResult;
+      // One system down is data, not a failed call — raising it as a call
+      // failure would throw away the healthy system's answer.
+      expect(result.isError).toBeUndefined();
+      expect(parseResults(result)).toEqual([
+        {
+          system: 'nas-a',
+          status: 'SUCCESS',
+          value: [
+            {
+              name: 'tank',
+              status: 'ONLINE',
+              healthy: true,
+              size_bytes: 100,
+              allocated_bytes: 40,
+              free_bytes: 60,
+            },
+          ],
+        },
+        {
+          system: 'nas-b',
+          status: 'ERROR',
+          error: {
+            message: 'fixture: pool.query configured to fail on nas-b',
+            errname: 'EFAULT',
+            errno: 14,
+          },
+        },
+      ]);
+    } finally {
+      await session.close();
+    }
+  }, 30_000);
+
+  it('approval path: the plan names every system, and the confirmed execution returns one result per system', async () => {
+    const { configPath, auditPath } = writeConfig({
+      systems: ['nas-a', 'nas-b'],
+      requireElicitation: false,
+    });
+    const session = await connectSession(['--config', configPath]);
+    try {
+      const planned = (await session.client.callTool({
+        name: 'snapshots_create',
+        arguments: { dataset: 'tank/data', name: 'before', systems: 'all' },
+      })) as CallToolResult;
+      expect(planned.isError).toBeUndefined();
+      const planText = (planned.content[0] as { text: string }).text;
+
+      // The serialization half of what tier 3 asserts on a screen: the plan
+      // that crossed real stdio names both systems, one step each.
+      expect(planText).toContain('Target systems: nas-a, nas-b');
+      expect(planText).toContain('- [nas-a] Create snapshot "tank/data@before"');
+      expect(planText).toContain('- [nas-b] Create snapshot "tank/data@before"');
+
+      const token = /Confirmation token \(single-use, expires\): (\S+)/.exec(planText)?.[1];
+      expect(token, planText).toBeDefined();
+      const confirmed = (await session.client.callTool({
+        name: 'snapshots_create',
+        arguments: {
+          dataset: 'tank/data',
+          name: 'before',
+          systems: 'all',
+          confirmation_token: token,
+        },
+      })) as CallToolResult;
+      expect(confirmed.isError).toBeUndefined();
+      // A mutating fan-out EXECUTION crossing real stdio, one result per
+      // system — the only test that reaches the fixture's
+      // pool.snapshot.create handler.
+      expect(parseResults(confirmed)).toEqual([
+        { system: 'nas-a', status: 'SUCCESS', value: { created: 'tank/data@before' } },
+        { system: 'nas-b', status: 'SUCCESS', value: { created: 'tank/data@before' } },
+      ]);
+
+      // The audit sink writes per event, so no shutdown is needed here.
+      await until(() => readFileSync(auditPath, 'utf8').includes('"execute"'));
+      const events = readFileSync(auditPath, 'utf8')
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line) as { tool: string; phase: string });
+      expect(events.some((e) => e.tool === 'snapshots_create' && e.phase === 'execute')).toBe(true);
+    } finally {
+      await session.close();
+    }
   }, 30_000);
 });
 

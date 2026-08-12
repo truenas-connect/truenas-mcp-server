@@ -1,8 +1,8 @@
 /**
  * Connect-and-serve: the wiring behind the `serve` command, in one exported
  * unit so the tier-2 stdio fixture drives the exact path the production
- * binary does — same credential provider, same rollback, same trace ordering
- * (docs/testing-plan.md, Phase 2). The client factory is the only injectable,
+ * binary does — same credential provider, same rollback, same trace ordering.
+ * The client factory is the only injectable,
  * mirroring the seam `init.ts` already has; there is deliberately no
  * environment-variable override for it.
  */

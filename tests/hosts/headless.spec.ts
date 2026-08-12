@@ -17,7 +17,7 @@ import {
 } from './harness';
 
 /**
- * Tier 3, headless (testing-plan Phase 5): one real host, one prompt, all
+ * Tier 3, headless: one real host, one prompt, all
  * assertions read from our server's --trace and audit JSONL — never from
  * model prose. The load-bearing one is the negative: an unattended host must
  * never answer an elicitation with "accept". A host that did would silently
