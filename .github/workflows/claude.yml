@@ -15,17 +15,23 @@ name: Claude Review
 # report what turns up. Do not put severity levels back in it — the gate
 # scores the shared ones.
 #
-# Reports as `review / <job names in ux-github-workflows>` — two checks, since
-# the shared workflow runs the write-access gate as a job of its own,
-# replacing `check-team / Check Team Membership` and `review`. Branch
-# protection matches those whole strings: any required-check setting still
-# naming the old ones stays pending forever, and the PR is unmergeable with
-# nothing red on it to explain why.
+# Reports as two checks — these exact strings, which are what branch
+# protection would match:
+#
+#   review / Automatic PR review
+#   review / check-member / Check member access
+#
+# (three segments on the gate: it is a workflow the shared workflow itself
+# calls). They replace `check-team / Check Team Membership` and `review`: any
+# required-check setting still naming the old ones stays pending forever, and
+# the PR is unmergeable with nothing red on it to explain why.
 #
 # TEMPORARY: pinned to the feat/review-gate-hardening branch until it merges —
 # the workflow ref below and the tooling-ref input must always name the same
 # ref (the workflow cannot derive its own ref, see its tooling-ref
-# description). Once merged, point both at @master and drop the `with:` block.
+# description). Once merged, point both at @master and drop the `with:`
+# block. Not enforced by this comment alone: a blocking step in ci.yml fails
+# the build the moment these refs name a branch that no longer exists.
 
 on:
   pull_request:

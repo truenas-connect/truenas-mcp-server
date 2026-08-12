@@ -24,6 +24,23 @@ jobs:
         node: [22, 24]
     steps:
       - uses: actions/checkout@v4
+      # claude.yml temporarily pins the shared review workflow to a feature
+      # branch of ux-github-workflows (see the TEMPORARY note there). A merge
+      # normally deletes that branch, and a `uses:` ref that stops resolving
+      # fails only the non-blocking review check — quietly. This fails the
+      # blocking check instead, at exactly the moment the un-pin is due, and
+      # becomes a no-op once no workflow names the branch any more (delete it
+      # then).
+      - name: Fail if the temporary workflow pin outlived its branch
+        run: |
+          branch='feat/review-gate-hardening'
+          if grep -rq "ux-github-workflows/.*@$branch" .github/workflows/; then
+            if ! git ls-remote --exit-code https://github.com/iXsystems/ux-github-workflows.git "refs/heads/$branch" >/dev/null; then
+              echo "::error::.github/workflows still pins iXsystems/ux-github-workflows@$branch, but that branch no longer exists."
+              echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this step."
+              exit 1
+            fi
+          fi
       - run: corepack enable
       - uses: actions/setup-node@v4
         with:
