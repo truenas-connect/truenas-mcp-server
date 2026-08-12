@@ -1,8 +1,8 @@
 # Testing plan — tiers 0–3
 
-**Status:** working document, last updated 2026-08-11. Temporary. It exists so
+**Status:** working document, last updated 2026-08-12. Temporary. It exists so
 the tier model and the phase breakdown are reviewable in one place; fold it into
-permanent documentation once tiers 0–2 have landed and tiers 3–4 have a home.
+permanent documentation once tier 4 has a home.
 
 **Progress: tiers 0–3 are complete.** Phases 0, 1 and 1b (server#7,
 server#9, base#5, base#6), Phase 2 (server#11), Phase 3 (server#13),
@@ -753,7 +753,12 @@ length the current fixture never produces.
 - `tests/stdio.spec.ts` — register two systems and assert over real stdio:
   a read-only `systems: "all"` returns one result per system in registry
   order, with the erroring system present as a structured `ERROR` entry
-  rather than a failed call; and a mutating call's plan text names both.
+  rather than a failed call; a mutating call's plan text names both; and the
+  approval path is completed — approve (or confirm with the fallback token)
+  and assert one execute result per system. That last call finally reaches
+  the fixture's `pool.snapshot.create` handler, parked since Phase 4 behind
+  a comment reserving it "for a future approval-path test" — without it, no
+  mutating fan-out *execution* ever crosses real stdio, only plans do.
 - `tests/hosts/harness.ts` — `setUpFixture` writes two systems. `SESSION_PROMPT`
   already asks for `systems: "all"`, so no prompt change is needed, which keeps
   the model's job identical to today's.
@@ -761,7 +766,13 @@ length the current fixture never produces.
   today it takes the dataset and operation from our own elicitation frame and
   requires them on screen (`:118`, `:131`). With two systems it must
   additionally require **every system name the plan targets** to appear, still
-  read from the frame and never hard-coded.
+  read from the frame and never hard-coded. "Appear" means: in the terminal
+  text at some point before the approve/decline keys are sent, accumulated
+  across polls — not all in one snapshot. A fixed-size box that *scrolls* a
+  long plan still showed it to the human and passes; what fails is a name
+  that never reaches the screen at all — the truncate-or-summarise host this
+  phase exists to catch. This is a deliberate semantic choice, recorded here
+  so the assertion is not "fixed" into a single-snapshot check later.
 - `tests/hosts/headless.spec.ts` — unchanged in intent; `elicitationAccepts`
   is already per-elicitation (`harness.ts:142`), so the never-accepts
   invariant generalises without edit. Confirm it, do not rewrite it.
@@ -773,9 +784,24 @@ length the current fixture never produces.
 - Tier 3 interactive fails if a system named in the plan does not reach the
   screen — verified deliberately by asserting a system name the plan does
   *not* target must be absent, so the check cannot pass on a substring
-  accident.
-- The suites still pass with one system configured, so the fixtures are not
-  quietly hard-wired to N=2.
+  accident. Because the prompt says `systems: "all"`, every registered name
+  is targeted and the control name is necessarily unregistered; for the
+  control to bite it must be shaped like the real names (`nas-c` against
+  `nas-a`/`nas-b`), and no real name may be a prefix of another, or the
+  positive checks inherit the same substring problem in reverse.
+- N=1 stays a *tested* configuration, not a promise. Tier 2 keeps at least
+  one test running against a one-system config in CI — the suite writes its
+  own config per test, so this costs nothing. At tier 3 a second nightly run
+  per count is not worth the budget; instead nothing in the specs may
+  hard-code N=2 — every per-system assertion iterates over names read from
+  the config or the frames — so reverting `setUpFixture` to one system is a
+  one-line local check.
+
+**Budget.** The tier 3 timeouts were sized against single-system runs on a
+CPU-bound Ollama host that already needs minutes per step. A two-system
+fixture means a longer plan for the host to render and a slower session
+end-to-end, so re-check the interactive budgets in the same PR rather than
+letting the first nightly discover them by timing out.
 
 **Not in this phase.** Operations *between* systems — replication A→B,
 cross-fleet config comparison — are a design question, not a test gap:
