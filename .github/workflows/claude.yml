@@ -25,20 +25,7 @@ name: Claude Review
 # TEMPORARY: pinned to the feat/review-gate-hardening branch until it merges —
 # the workflow ref below and the tooling-ref input must always name the same
 # ref (the workflow cannot derive its own ref, see its tooling-ref
-# description).
-#
-# Also temporary is the check-member job below, working around a cross-ref
-# gap that exists only for branch-pinned callers: the branch's claude-review
-# gates on check-member's `is_writer` output, but pins check-member to
-# @master, which does not have that output yet — so its own gate always
-# skips the review. Until the branch merges (master then gains is_writer and
-# the gap closes), we run the branch's check-member ourselves and pass
-# require-write-access: false, which keeps the same don't-review-drive-by-PRs
-# property with the same code.
-#
-# Once feat/review-gate-hardening merges: point the `uses:` at @master,
-# delete the check-member job and the `needs:`/`if:` lines, and drop the
-# whole `with:` block.
+# description). Once merged, point both at @master and drop the `with:` block.
 
 on:
   pull_request:
@@ -47,21 +34,13 @@ on:
       - main
 
 jobs:
-  check-member:
-    uses: iXsystems/ux-github-workflows/.github/workflows/check-member.yml@feat/review-gate-hardening
-    permissions:
-      contents: read
-
   review:
-    needs: [check-member]
-    if: needs.check-member.outputs.is_writer == 'true'
     uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@feat/review-gate-hardening
     permissions:
       contents: read
       issues: write
       pull-requests: write
     with:
-      require-write-access: false
       tooling-ref: feat/review-gate-hardening
     secrets:
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}
