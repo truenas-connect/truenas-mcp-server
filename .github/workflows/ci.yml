@@ -15,23 +15,23 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  verify:
-    name: verify (node ${{ matrix.node }})
+  # claude.yml temporarily pins the shared review workflow to a feature
+  # branch of ux-github-workflows (see the TEMPORARY note there). Once that
+  # branch merges the pin is stale, and its eventual deletion would fail
+  # only the non-blocking review check — quietly. This blocking job fails
+  # instead, while any pin remains, on a branch that is merged (any merge
+  # style — it reads the PR's state, not history) or gone. It matches the
+  # `uses:` refs and the bare `tooling-ref:` value both, so a half-done
+  # un-pin cannot slip through, and becomes a no-op once neither names the
+  # branch (delete the job then). Its own job on purpose: it is expected to
+  # fire exactly once, at a moment nobody is looking for it — a red
+  # "temporary workflow pin" reads like itself, where a red verify leg with
+  # no test output reads like a broken test run.
+  pin-guard:
+    name: temporary workflow pin
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node: [22, 24]
     steps:
       - uses: actions/checkout@v4
-      # claude.yml temporarily pins the shared review workflow to a feature
-      # branch of ux-github-workflows (see the TEMPORARY note there). Once
-      # that branch merges the pin is stale, and its eventual deletion would
-      # fail only the non-blocking review check — quietly. This fails the
-      # blocking check instead, while any pin remains, on a branch that is
-      # fully merged or gone. It matches the `uses:` refs and the bare
-      # `tooling-ref:` value both, so a half-done un-pin cannot slip through,
-      # and becomes a no-op once neither names the branch (delete it then).
       - name: Fail if the temporary workflow pin outlived its branch
         env:
           GH_TOKEN: ${{ github.token }}
@@ -43,21 +43,36 @@ jobs:
           git ls-remote --exit-code https://github.com/iXsystems/ux-github-workflows.git "refs/heads/$branch" >/dev/null && rc=0 || rc=$?
           if [ "$rc" = 2 ]; then
             echo "::error::.github/workflows still pins iXsystems/ux-github-workflows@$branch, but that branch no longer exists."
-            echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this step."
+            echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this job."
             exit 1
           elif [ "$rc" != 0 ]; then
             echo "::warning::could not reach ux-github-workflows to verify the temporary pin (git ls-remote exit $rc); skipping the check."
             exit 0
           fi
           # The branch existing is not enough: the un-pin is due on MERGE,
-          # and delete-on-merge is only the usual follow-up. ahead_by counts
-          # commits the branch has that master lacks; 0 means fully merged.
-          ahead=$(gh api "repos/iXsystems/ux-github-workflows/compare/master...$branch" -q .ahead_by 2>/dev/null) || ahead=''
-          if [ "$ahead" = "0" ]; then
-            echo "::error::iXsystems/ux-github-workflows@$branch is fully merged into master — the temporary pin is due for removal."
-            echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this step."
+          # and delete-on-merge is only the usual follow-up. Ask the PR's
+          # state rather than comparing history — a squash or rebase merge
+          # rewrites the branch's SHAs, so a compare would report the branch
+          # as ahead forever.
+          merged=$(gh api "repos/iXsystems/ux-github-workflows/commits/refs%2Fheads%2F$branch/pulls" \
+            -q 'any(.base.ref == "master" and .merged_at != null)') || merged=''
+          if [ "$merged" = "true" ]; then
+            echo "::error::iXsystems/ux-github-workflows@$branch is merged into master — the temporary pin is due for removal."
+            echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this job."
             exit 1
+          elif [ -z "$merged" ]; then
+            echo "::warning::could not read the merge state of ux-github-workflows@$branch; skipping the merged-pin check."
           fi
+
+  verify:
+    name: verify (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [22, 24]
+    steps:
+      - uses: actions/checkout@v4
       - run: corepack enable
       - uses: actions/setup-node@v4
         with:

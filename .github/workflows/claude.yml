@@ -30,9 +30,9 @@ name: Claude Review
 # the workflow ref below and the tooling-ref input must always name the same
 # ref (the workflow cannot derive its own ref, see its tooling-ref
 # description). Once merged, point both at @master and drop the `with:`
-# block. Not enforced by this comment alone: a blocking step in ci.yml fails
+# block. Not enforced by this comment alone: ci.yml's pin-guard job fails
 # the build while either ref (the `uses:` pin or the bare tooling-ref value)
-# still names the branch after it is fully merged or gone.
+# still names the branch after it is merged or gone.
 
 on:
   pull_request:
