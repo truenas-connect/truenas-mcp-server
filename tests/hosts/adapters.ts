@@ -75,7 +75,7 @@ export const claudeCode: HostAdapter = {
     ALLOWED_TOOLS,
   ],
   // In a fresh directory the trust dialog swallows anything typed before it
-  // is answered — the cause of the phase's originally inconclusive probe.
+  // is answered — the cause of the suite's originally inconclusive probe.
   startupDialogs: [{ pattern: /trust this folder/i, response: '\r' }],
   readyPattern: /\? for shortcuts/,
   declineKeys: ['\x1b'],

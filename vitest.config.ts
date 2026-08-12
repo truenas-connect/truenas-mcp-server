@@ -33,8 +33,9 @@ export default defineConfig({
         // Same situation as cli.ts: process wiring (stdio transport, signal
         // handlers, process.exit) exercised through subprocesses — startup
         // failures via cli.spec.ts today, the full session via the tier-2
-        // stdio fixture (testing-plan Phase 4). Coverage is sourced from
-        // tiers 0-1 only (plan rule 2).
+        // stdio fixture. Coverage is sourced from tiers 0-1 only (coverage
+        // policy rule 2 in docs/testing-plan.md) — do not "fix" this
+        // exclusion by deleting the subprocess tests.
         'src/run.ts',
       ],
       // Floors, not targets: set at the measured level so a decrease fails CI.
