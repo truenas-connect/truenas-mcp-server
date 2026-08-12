@@ -4,11 +4,11 @@
 the tier model and the phase breakdown are reviewable in one place; fold it into
 permanent documentation once tier 4 has a home.
 
-**Progress: tiers 0–3 are complete.** Phases 0, 1 and 1b (server#7,
-server#9, base#5, base#6), Phase 2 (server#11), Phase 3 (server#13),
-Phase 4 (server#15) and Phase 5 (server#17, server#18, server#19) have all
-landed. **Phase 6 — multi-system coverage at tiers 2 and 3 — is specified
-below and unblocked.** Tier 4 still needs a home.
+**Progress: tiers 0–3 are complete, including multi-system coverage.**
+Phases 0, 1 and 1b (server#7, server#9, base#5, base#6), Phase 2 (server#11),
+Phase 3 (server#13), Phase 4 (server#15), Phase 5 (server#17, server#18,
+server#19) and Phase 6 (server#23) have all landed. Tier 4 still needs a
+home.
 
 Figures below are measured against `main` of both repos as of 2026-08-05, after
 Phase 1/1b. The "Measured today" block under Coverage policy is the exception:
@@ -89,10 +89,9 @@ non-blocking: a host-agnostic core (`harness.ts`) plus thin per-host adapters
 against our own `--trace` and audit JSONL. Claude Code and goose/Ollama are
 both verified, headless and interactive.
 
-### Multi-system — covered at tiers 0 and 1, not above
+### Multi-system — covered at every tier
 
-Recorded here because it reads as a gap and mostly is not one. Fan-out is
-covered where the logic lives:
+Fan-out is covered where the logic lives:
 
 - **tier 0**, base — `fanout.spec.ts` (partial failure, `errname`/`errno`
   extraction) and `system-registry.spec.ts` (`all` / list / single / omitted,
@@ -104,10 +103,11 @@ covered where the logic lives:
   the successfully-planned subset so the confirm call must narrow `systems`
   to match.
 
-What is *not* covered is tiers 2 and 3, where every fixture registers exactly
-one system (`nas-a`). Both call `systems: "all"`, but against N=1 — the
-degenerate case, which looks like fan-out coverage in the source and is not.
-Phase 6 closes that.
+Tiers 2 and 3 originally registered exactly one system, so their
+`systems: "all"` calls exercised only the degenerate N=1 case. Phase 6
+(server#23) closed that: both fixtures register two, tier 2 asserts a partial
+fan-out failure and a confirmed fan-out execution across real stdio, and
+tier 3 asserts every plan-targeted system name reaches the screen.
 
 ## Coverage policy
 
@@ -265,13 +265,12 @@ Phase 0   ->  Phase 1   (server: raises the floors Phase 0 recorded)   DONE
 Phase 2   ->  Phase 3                                                  DONE
           ->  Phase 4                                                  DONE
 Phase 4   ->  Phase 5   (tier 3: real MCP hosts)                       DONE
-Phase 5   ->  Phase 6   (multi-system at tiers 2 and 3)                TODO
+Phase 5   ->  Phase 6   (multi-system at tiers 2 and 3)                DONE
 ```
 
-Phases 0 through 5 have landed — their sections below are kept as the record
+Phases 0 through 6 have landed — their sections below are kept as the record
 of what was decided and why, since the rationale still governs how the floors
-are maintained. **Phase 6 is the next piece of work**, and needs no tier-4
-infrastructure to start.
+are maintained. **The next piece of work is giving tier 4 a home.**
 
 ### Phase 0 — coverage measurement and gates *(landed: base#5, server#7)*
 
@@ -715,7 +714,7 @@ action, a JSON-RPC error, or nothing), it must not be an accept.
 is provider behaviour, not ours, and asserting it would make the suite fail
 whenever a model updates.
 
-### Phase 6 — multi-system at tiers 2 and 3 *(next)*
+### Phase 6 — multi-system at tiers 2 and 3 *(landed: server#23)*
 
 Raised 2026-08-11: the MCP is meant to drive several TrueNAS boxes, and the
 tiers that touch real stdio and real hosts have only ever seen one.
