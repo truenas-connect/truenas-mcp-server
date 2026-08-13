@@ -5,9 +5,6 @@ name: PR Title
 # repo already use (e.g. "TNC-2201 / v2.1 / test: ..."). The check itself
 # lives in iXsystems/ux-github-workflows as pr-title.yml.
 #
-# Pinned to @master, unlike claude.yml's temporary branch pin: the file is
-# identical on feat/review-gate-hardening, so nothing here needs the branch.
-#
 # This repo has no semantic-release, so the gate is title hygiene only. If
 # one is ever added, its .releaserc.json parserOpts.headerPattern /
 # breakingHeaderPattern must equal the pattern documented in the shared

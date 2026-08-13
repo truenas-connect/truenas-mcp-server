@@ -25,14 +25,6 @@ name: Claude Review
 # calls). They replace `check-team / Check Team Membership` and `review`: any
 # required-check setting still naming the old ones stays pending forever, and
 # the PR is unmergeable with nothing red on it to explain why.
-#
-# TEMPORARY: pinned to the feat/review-gate-hardening branch until it merges —
-# the workflow ref below and the tooling-ref input must always name the same
-# ref (the workflow cannot derive its own ref, see its tooling-ref
-# description). Once merged, point both at @master and drop the `with:`
-# block. Not enforced by this comment alone: ci.yml's pin-guard job fails
-# the build while either ref (the `uses:` pin or the bare tooling-ref value)
-# still names the branch after it is merged or gone.
 
 on:
   pull_request:
@@ -42,12 +34,10 @@ on:
 
 jobs:
   review:
-    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@feat/review-gate-hardening
+    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
     permissions:
       contents: read
       issues: write
       pull-requests: write
-    with:
-      tooling-ref: feat/review-gate-hardening
     secrets:
       anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}

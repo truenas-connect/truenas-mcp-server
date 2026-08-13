@@ -15,64 +15,6 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  # claude.yml temporarily pins the shared review workflow to a feature
-  # branch of ux-github-workflows (see the TEMPORARY note there). Once that
-  # branch merges the pin is stale, and its eventual deletion would fail
-  # only the non-blocking review check — quietly. This blocking job fails
-  # instead, while any pin remains, on a branch that is merged (any merge
-  # style — it reads the PR's state, not history) or gone. It matches the
-  # `uses:` refs and the bare `tooling-ref:` value both, so a half-done
-  # un-pin cannot slip through, and becomes a no-op once neither names the
-  # branch (delete the job then). Its own job on purpose: it is expected to
-  # fire exactly once, at a moment nobody is looking for it — a red
-  # "temporary workflow pin" reads like itself, where a red verify leg with
-  # no test output reads like a broken test run.
-  pin-guard:
-    name: temporary workflow pin
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Fail if the temporary workflow pin outlived its branch
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          branch='feat/review-gate-hardening'
-          if ! grep -rqE "ux-github-workflows/.*@$branch|tooling-ref: *$branch" .github/workflows/; then
-            exit 0
-          fi
-          git ls-remote --exit-code https://github.com/iXsystems/ux-github-workflows.git "refs/heads/$branch" >/dev/null && rc=0 || rc=$?
-          if [ "$rc" = 2 ]; then
-            echo "::error::.github/workflows still pins iXsystems/ux-github-workflows@$branch, but that branch no longer exists."
-            echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this job."
-            exit 1
-          elif [ "$rc" != 0 ]; then
-            echo "::warning::could not reach ux-github-workflows to verify the temporary pin (git ls-remote exit $rc); skipping the check."
-            exit 0
-          fi
-          # The branch existing is not enough: the un-pin is due on MERGE,
-          # and delete-on-merge is only the usual follow-up. Ask the PR's
-          # state rather than comparing history — a squash or rebase merge
-          # rewrites the branch's SHAs, so a compare would report the branch
-          # as ahead forever. The ref is fully percent-encoded (the slash in
-          # the branch name too): {ref} is a single path segment, documented
-          # as a SHA or heads/BRANCH.
-          merged=$(gh api "repos/iXsystems/ux-github-workflows/commits/heads%2F${branch//\//%2F}/pulls" \
-            -q 'any(.base.ref == "master" and .merged_at != null)') || merged=''
-          if [ "$merged" = "true" ]; then
-            echo "::error::iXsystems/ux-github-workflows@$branch is merged into master — the temporary pin is due for removal."
-            echo "::error::Point the refs at @master — the steps are in claude.yml's TEMPORARY note — then delete this job."
-            exit 1
-          elif [ -z "$merged" ]; then
-            # Fail closed, unlike the ls-remote leg: that one can tell "no
-            # such ref" from "could not reach" and only skips on the latter,
-            # while this catch-all cannot tell a permanent 404 from a blip —
-            # and a ::warning:: inside a green job is invisible at the one
-            # moment this guard exists for. A guard that cannot answer its
-            # question has not answered it.
-            echo "::error::could not read the merge state of ux-github-workflows@$branch — the temporary pin cannot be verified."
-            exit 1
-          fi
-
   verify:
     name: verify (node ${{ matrix.node }})
     runs-on: ubuntu-latest
