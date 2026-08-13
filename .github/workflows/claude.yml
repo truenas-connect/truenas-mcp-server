@@ -1,45 +1,43 @@
 name: Claude Review
+
+# The review itself lives in iXsystems/ux-github-workflows, as
+# claude-review.yml — the one built in truenas/api-client-ts (schema, rubric,
+# threshold gate, thread history, stale banner), moved there so every caller
+# shares it and a change to the rubric or the gate happens once.
+#
+# What moved out of this repo with the switch:
+#   the inline claude-code-action review that used to live in this file
+#   .github/workflows/check-team.yml -> check-member.yml there, called by it
+#
+# `.claude/review-prompt.md` stays here, and is what the shared workflow's
+# `prompt-file` input points at by default. It says what to look for in *this*
+# codebase; the shared rubric is appended after it and says how to grade and
+# report what turns up. Do not put severity levels back in it — the gate
+# scores the shared ones.
+#
+# Reports as two checks — these exact strings, which are what branch
+# protection would match:
+#
+#   review / Automatic PR review
+#   review / check-member / Check member access
+#
+# (three segments on the gate: it is a workflow the shared workflow itself
+# calls). They replace `check-team / Check Team Membership` and `review`: any
+# required-check setting still naming the old ones stays pending forever, and
+# the PR is unmergeable with nothing red on it to explain why.
+
 on:
   pull_request:
     types: [opened, synchronize]
     branches:
       - main
-jobs:
-  check-team:
-    permissions:
-      contents: read
-    uses: ./.github/workflows/check-team.yml
 
+jobs:
   review:
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs: [check-team]
-    if: |
-      needs.check-team.outputs.is_member == 'true' &&
-      !contains(github.event.pull_request.labels.*.name, 'skip-claude')
+    uses: iXsystems/ux-github-workflows/.github/workflows/claude-review.yml@master
     permissions:
       contents: read
       issues: write
       pull-requests: write
-      id-token: write
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 10
-
-      - name: Automatic PR Review
-        uses: anthropics/claude-code-action@v1.0.133
-        with:
-          anthropic_api_key: ${{ secrets.CLAUDE_API_KEY }}
-          claude_args: "--model claude-opus-4-8"
-          track_progress: true
-          use_sticky_comment: true
-          prompt: |
-            REPO: ${{ github.repository }}
-            PR NUMBER: ${{ github.event.pull_request.number }}
-
-            Please review this pull request using the guidelines below.
-            It should be already checked out in the current directory.
-
-            {{file:.claude/review-prompt.md}}
+    secrets:
+      anthropic-api-key: ${{ secrets.CLAUDE_API_KEY }}

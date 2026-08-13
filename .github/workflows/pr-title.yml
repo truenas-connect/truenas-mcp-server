@@ -1,0 +1,31 @@
+name: PR Title
+
+# Requires a Conventional Commits PR title, optionally prefixed with
+# "<ticket> / <version> / " segments — the shape squash-merge titles in this
+# repo already use (e.g. "TNC-2201 / v2.1 / test: ..."). The check itself
+# lives in iXsystems/ux-github-workflows as pr-title.yml.
+#
+# This repo has no semantic-release, so the gate is title hygiene only. If
+# one is ever added, its .releaserc.json parserOpts.headerPattern /
+# breakingHeaderPattern must equal the pattern documented in the shared
+# workflow's header — a title this gate accepts has to parse there to the
+# same type, or a green merge quietly publishes nothing.
+#
+# pull_request_target rather than pull_request, per the shared workflow's
+# usage: it never checks out PR code — the title is read from the event
+# payload and passed via env — and the target event runs the base branch's
+# version of this file, so the check applies to already-open PRs and cannot
+# be edited out from a PR branch.
+#
+# Reports as `pr-title / Validate Conventional Commit Title`; that whole
+# string is what branch protection would match.
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize]
+
+jobs:
+  pr-title:
+    permissions:
+      pull-requests: read
+    uses: iXsystems/ux-github-workflows/.github/workflows/pr-title.yml@master
