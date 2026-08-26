@@ -44,7 +44,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
-    "@truenas/api-client": "^2.0.0",
+    "@truenas/api-client": "^3.0.3",
     "@truenas/mcp-base": "git+https://github.com/truenas-connect/truenas-mcp-base.git#main",
     "rxjs": "~7.8.0"
   },
