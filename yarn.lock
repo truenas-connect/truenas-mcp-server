@@ -838,22 +838,22 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@truenas/api-client@npm:^2.0.0":
-  version: 2.0.0
-  resolution: "@truenas/api-client@npm:2.0.0"
+"@truenas/api-client@npm:^4.0.0":
+  version: 4.0.1
+  resolution: "@truenas/api-client@npm:4.0.1"
   peerDependencies:
     rxjs: ^7.8.0
-  checksum: 10c0/32e484524ff31af5cd1d17285901f948a68ea9095aad075dde0dd9af7ea2430383d78ad48b7ccf1ea08abeb1a6c3acf726ed35834723d197138533f54ca6817e
+  checksum: 10c0/2a923b5dee53e139d4bfe36afc1c416e0fba0d7ac6b24a5cd7a00525493d5ee2ef49e75462c5833c56cb243bf0fb88f551525170b1eb7e8d57916c9e915667c6
   languageName: node
   linkType: hard
 
 "@truenas/mcp-base@git+https://github.com/truenas-connect/truenas-mcp-base.git#main":
   version: 0.0.0
-  resolution: "@truenas/mcp-base@https://github.com/truenas-connect/truenas-mcp-base.git#commit=4792b2b238667d9b5072d6e0dc110f2465ea8781"
+  resolution: "@truenas/mcp-base@https://github.com/truenas-connect/truenas-mcp-base.git#commit=f1075febb82f95f7d0a50034fefb08ea2da720df"
   peerDependencies:
-    "@truenas/api-client": ^2.0.0
+    "@truenas/api-client": ^4.0.0
     rxjs: ^7.8.0
-  checksum: 10c0/e0054df78d7cddd127071f0fbf5a20de9975e31cb0e4e9124a6d46c388dec89453fa11f02e01f66b30ba488580f61cf0e730a1e707f72b6f3739cf31785aaba5
+  checksum: 10c0/17ab5b87294507d101b2c7ba18c45b16af11e6c7ee5426e3a64e17dd1c0e9861ef911bafee4ea41736e66fd108c9962c77e71db1e09a8d55e2ca76164216c449
   languageName: node
   linkType: hard
 
@@ -863,7 +863,7 @@ __metadata:
   dependencies:
     "@eslint/js": "npm:^9.18.0"
     "@modelcontextprotocol/sdk": "npm:^1.29.0"
-    "@truenas/api-client": "npm:^2.0.0"
+    "@truenas/api-client": "npm:^4.0.0"
     "@truenas/mcp-base": "git+https://github.com/truenas-connect/truenas-mcp-base.git#main"
     "@types/node": "npm:^22.0.0"
     "@vitest/coverage-v8": "npm:^3.0.0"
