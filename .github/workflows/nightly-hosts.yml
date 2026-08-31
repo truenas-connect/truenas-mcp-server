@@ -36,14 +36,23 @@ jobs:
       # hoisting the secret itself here would hand it to every step,
       # including the curl|bash installers. The real token goes only to the
       # test step below.
-      # Either credential enables the claude half — both are dedicated to
-      # this workflow (deliberately not the review workflow's CLAUDE_API_KEY,
-      # so each can be rotated or revoked independently):
-      # TEST_HOSTS_CLAUDE_API_KEY (an Anthropic API key; per-token billing) or
-      # TEST_HOSTS_CLAUDE_OAUTH_TOKEN (from `claude setup-token`; bills a
-      # claude.ai subscription). The test step picks the API key when both
-      # exist.
-      HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY != '' || secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN != '' }}
+      # Any of three credentials enables the claude half. The first two are
+      # dedicated to this workflow so it can be rotated or revoked without
+      # touching PR review; the third is the org-wide token review already
+      # uses, accepted last so the nightly is not dark while no dedicated
+      # secret exists:
+      #
+      #   TEST_HOSTS_CLAUDE_API_KEY     Anthropic API key, per-token billing
+      #   TEST_HOSTS_CLAUDE_OAUTH_TOKEN `claude setup-token`, subscription
+      #   UX_CLAUDE_CODE_OAUTH_TOKEN    org secret, granted per repository
+      #
+      # Setting either dedicated secret still takes precedence, so the
+      # independent-rotation property the first two exist for is intact —
+      # what changed is only what happens when neither is set. The org secret
+      # resolves to the empty string where the grant is missing rather than
+      # failing, so this gate stays false there and claude-code skips exactly
+      # as it does today.
+      HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY != '' || secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN != '' || secrets.UX_CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
       - run: corepack enable
@@ -123,14 +132,29 @@ jobs:
           echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
       - name: Run host suite
         env:
+          # The real credentials reach this step and no other — the gate above
+          # is a boolean precisely so the curl|bash installer steps never see
+          # them. Same three, same precedence.
           API_KEY: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY }}
           OAUTH_TOKEN: ${{ secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN }}
+          ORG_OAUTH_TOKEN: ${{ secrets.UX_CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           # Export exactly one credential so the CLI never sees an ambiguous
-          # auth environment: prefer the API key, else the OAuth token.
+          # auth environment: prefer the API key, then this workflow's own
+          # token, then the org one. The order matches the gate above, so a
+          # repository that sets a dedicated secret gets it used rather than
+          # silently falling through to the shared account.
           if [ -n "$API_KEY" ]; then
             export ANTHROPIC_API_KEY="$API_KEY"
           elif [ -n "$OAUTH_TOKEN" ]; then
             export CLAUDE_CODE_OAUTH_TOKEN="$OAUTH_TOKEN"
+          elif [ -n "$ORG_OAUTH_TOKEN" ]; then
+            export CLAUDE_CODE_OAUTH_TOKEN="$ORG_OAUTH_TOKEN"
           fi
+          # Say which adapters are expected to run, so a skip is visible in
+          # the log rather than only in vitest's quiet down-arrow lines. A
+          # skipped adapter reads as a pass in the summary, which is how
+          # claude-code stayed dark across every green run before this.
+          echo "goose: enabled"
+          echo "claude-code: ${HAS_CLAUDE_AUTH}"
           yarn test:hosts
