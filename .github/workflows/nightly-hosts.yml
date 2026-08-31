@@ -70,10 +70,43 @@ jobs:
           # cached path — and the 2.5GB pull is a no-op on warm runs. The
           # backgrounded server persists across the job's later steps.
           sudo systemctl disable --now ollama 2>/dev/null || true
-          nohup ollama serve >/dev/null 2>&1 &
+          # OLLAMA_CONTEXT_LENGTH, not a model swap: ollama defaults num_ctx to
+          # 4096 whatever the model supports, and qwen3:4b-instruct natively
+          # supports 262144 — so the 4096 was a server setting we never set,
+          # not a limit of the model. Since the catalog grew to 41 tools the
+          # tools/list payload alone is ~32.9k tokens, so every request was
+          # rejected outright: "request (32892 tokens) exceeds the available
+          # context size (4096 tokens)". 40960 clears that with ~8k left for
+          # the conversation across the adapters' 8 turns.
+          #
+          # This buys headroom; it does not make the payload smaller. The KV
+          # cache is allocated for the whole window up front — order of 6GB
+          # for this model at this size, against the runner's 16GB — so raising
+          # it further is not free, and the durable fix is the ~29k tokens of
+          # tool *descriptions* (86.9% of the payload), tracked separately.
+          #
+          # A model's own Modelfile num_ctx would take precedence over this and
+          # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
+          # pins it). Checked against the registry: qwen3:4b-instruct sets only
+          # repeat_penalty/stop/temperature/top_k/top_p, no num_ctx — so the
+          # variable applies. Re-check that before swapping GOOSE_MODEL.
+          OLLAMA_CONTEXT_LENGTH=40960 nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
           ollama list >/dev/null
           ollama pull qwen3:4b-instruct
+          # Load the model and record the context it came up with, so the log
+          # says what was actually in force rather than what we asked for. Not
+          # an assertion: the suite already reports an undersized window
+          # precisely (the headless test fails in seconds quoting n_ctx), and a
+          # guess at ollama's ps schema would be a new way to fail spuriously.
+          # An empty prompt on /api/generate loads the model and returns —
+          # it generates nothing. `ollama run` is deliberately avoided here:
+          # with an empty argument it can drop into its interactive REPL and
+          # hang the job waiting on a stdin that never arrives.
+          curl -sS http://localhost:11434/api/generate \
+            -d '{"model":"qwen3:4b-instruct","prompt":"","keep_alive":"10m"}' \
+            >/dev/null || true
+          ollama ps || true
       - name: Install goose
         run: |
           curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \
