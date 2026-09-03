@@ -95,14 +95,16 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
   return { client, close: () => client.close() };
 }
 
-/** The JSON results array out of a tool result's text body: the whole text,
- * or everything after the prefix line — never "the first [", which would
- * silently couple parsing to the prefix prose staying bracket-free. */
+/**
+ * The JSON results array out of a tool result's text body. The per-system
+ * results are the pretty-printed JSON block, the only part of the body that
+ * starts a line with '[' and ends one with ']'. Anything before it is a
+ * human-facing prefix; anything after it is the tool's result guidance, which
+ * the server appends the first time a tool answers in a session. Never "the
+ * first [" or "the rest of the text", which would silently couple parsing to
+ * both surrounding prose blocks staying bracket-free.
+ */
 function parseResults(result: CallToolResult): unknown {
-  // The per-system results are the pretty-printed JSON block, the only part of
-  // the body that starts a line with '[' and ends one with ']'. Anything before
-  // it is a human-facing prefix; anything after it is the tool's result
-  // guidance, which the server appends the first time a tool answers.
   const text = (result.content[0] as { type: 'text'; text: string }).text;
   const start = text.search(/^\[/m);
   const end = text.search(/^\]/m);
@@ -223,6 +225,48 @@ describe('stdio session (SDK-driven)', () => {
     const events = audit.map((line) => JSON.parse(line) as { tool: string; phase: string });
     expect(events.some((e) => e.tool === 'storage_pool_status' && e.phase === 'read')).toBe(true);
     expect(events.some((e) => e.tool === 'snapshots_create' && e.phase === 'plan')).toBe(true);
+  }, 30_000);
+});
+
+describe('result guidance', () => {
+  it('arrives with the first data-bearing result of a real catalog tool, after the JSON, and only once', async () => {
+    const { configPath } = writeConfig();
+    const session = await connectSession(['--config', configPath]);
+    try {
+      const call = async (): Promise<string> => {
+        const result = (await session.client.callTool({
+          name: 'share_access',
+          arguments: { share: '/mnt/tank/data', systems: 'all' },
+        })) as CallToolResult;
+        expect(result.isError).toBeUndefined();
+        return (result.content[0] as { type: 'text'; text: string }).text;
+      };
+
+      const first = await call();
+      // The data is intact and parses as before: the guidance follows it.
+      expect(parseResults({ content: [{ type: 'text', text: first }] })).toMatchObject([
+        {
+          system: 'nas-a',
+          status: 'SUCCESS',
+          value: { protocol: 'NFS', id: 1, name: null, path: '/mnt/tank/data', failures: [] },
+        },
+      ]);
+      const heading = '\n\nHow to read share_access results (sent once per session';
+      expect(first).toContain(heading);
+      expect(first.indexOf(heading)).toBeGreaterThan(first.search(/^\]/m));
+      // The opening of the base's own guidance for this tool, so a base
+      // revision that stops attaching it — or attaches something else — fails
+      // here rather than leaving the tolerant parser green.
+      expect(first.slice(first.indexOf(heading))).toContain(
+        '`failures` reports a protocol whose share list could not be read',
+      );
+
+      const second = await call();
+      expect(second).not.toContain('How to read');
+      expect(second).not.toContain('`failures` reports a protocol');
+    } finally {
+      await session.close();
+    }
   }, 30_000);
 });
 
