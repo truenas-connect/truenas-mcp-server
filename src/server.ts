@@ -10,7 +10,6 @@ import {
   type AdvertisedTool,
   type ConfirmationService,
   type ExecutionOutcome,
-  type SystemResult,
   type ToolCatalog,
   type ToolExecutor,
 } from '@truenas/mcp-base';
@@ -32,6 +31,7 @@ export interface ServerDeps {
 }
 
 type PlanOutcome = Extract<ExecutionOutcome, { type: 'PLAN' }>;
+type ResultsOutcome = Extract<ExecutionOutcome, { type: 'RESULTS' }>;
 
 function toMcpTool(tool: AdvertisedTool): McpTool {
   return {
@@ -52,9 +52,30 @@ function textResult(text: string, isError = false): CallToolResult {
   return { content: [{ type: 'text', text }], ...(isError ? { isError: true } : {}) };
 }
 
-function resultsText(results: SystemResult<unknown>[], prefix?: string): string {
-  const body = JSON.stringify(results, null, 2);
-  return prefix ? `${prefix}\n${body}` : body;
+/**
+ * Renders a RESULTS outcome: an optional human-facing prefix, the per-system
+ * results as a JSON block, and — when the core attached it — the tool's
+ * result guidance after the data it is about.
+ *
+ * The guidance is the interpretation half of a tool's description (null /
+ * empty / unreadable conventions, what a field does not establish), which the
+ * core delivers with the first data-bearing result per tool per session
+ * instead of advertising it in every `tools/list`. Rendering it here is what
+ * lets the core stop carrying that text in `description`, so the field must
+ * never be dropped: its absence on a later call means "already delivered",
+ * and a caller that never saw it would be left without the caveats.
+ */
+function resultsText(outcome: ResultsOutcome, prefix?: string): string {
+  const body = JSON.stringify(outcome.results, null, 2);
+  const data = prefix ? `${prefix}\n${body}` : body;
+  if (outcome.guidance === undefined) {
+    return data;
+  }
+  return (
+    `${data}\n\n` +
+    `How to read ${outcome.tool} results (sent once per session, keep it in mind ` +
+    `for later calls):\n${outcome.guidance}`
+  );
 }
 
 /**
@@ -97,7 +118,7 @@ export function createServer({
     try {
       const outcome = await executor.execute(name, args);
       if (outcome.type === 'RESULTS') {
-        return textResult(resultsText(outcome.results));
+        return textResult(resultsText(outcome));
       }
       if (server.getClientCapabilities()?.elicitation) {
         return await approveAndExecute(outcome);
@@ -158,7 +179,7 @@ export function createServer({
     if (executed.type !== 'RESULTS') {
       throw new Error('Internal error: a confirmed call returned another plan');
     }
-    return textResult(resultsText(executed.results, 'Approved by the user in the client UI.'));
+    return textResult(resultsText(executed, 'Approved by the user in the client UI.'));
   }
 
   return server;

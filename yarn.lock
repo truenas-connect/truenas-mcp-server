@@ -849,11 +849,11 @@ __metadata:
 
 "@truenas/mcp-base@git+https://github.com/truenas-connect/truenas-mcp-base.git#main":
   version: 0.0.0
-  resolution: "@truenas/mcp-base@https://github.com/truenas-connect/truenas-mcp-base.git#commit=f1075febb82f95f7d0a50034fefb08ea2da720df"
+  resolution: "@truenas/mcp-base@https://github.com/truenas-connect/truenas-mcp-base.git#commit=3dba3b4251c69ceb83bbe6511a03ba3746d8f300"
   peerDependencies:
     "@truenas/api-client": ^4.0.0
     rxjs: ^7.8.0
-  checksum: 10c0/17ab5b87294507d101b2c7ba18c45b16af11e6c7ee5426e3a64e17dd1c0e9861ef911bafee4ea41736e66fd108c9962c77e71db1e09a8d55e2ca76164216c449
+  checksum: 10c0/8d9052d4c34dcc212cb92f549de89fe906f247f785aae1ad7a28e67880a2ad9c015e7e8bee205161fc3fce43dac76d04d6b197e21f12e6e938e4892646a057c5
   languageName: node
   linkType: hard
 

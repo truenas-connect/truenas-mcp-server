@@ -33,6 +33,13 @@ interface SetupOptions {
   requireElicitation?: boolean;
 }
 
+// Guidance text deliberately contains brackets and braces: the JSON block
+// extractor below must find the results by structure, not by the first '['.
+const READ_GUIDANCE =
+  'The value is "<system>-healthy"; anything else [including null] means the pool was not read.';
+const MUTATING_GUIDANCE =
+  '"created" names the snapshot {as the system reports it}; it does not confirm it is on disk.';
+
 async function connectPair(server: Server, client: Client): Promise<void> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
@@ -58,6 +65,7 @@ async function setup(options: SetupOptions = {}) {
     requiredRole: Role.Full,
     mutating: true,
     destructiveness: 'reversible',
+    resultGuidance: MUTATING_GUIDANCE,
     normalizeArgs: (args) => {
       if (typeof args['dataset'] !== 'string') {
         throw new Error('"dataset" is required');
@@ -80,6 +88,7 @@ async function setup(options: SetupOptions = {}) {
     inputSchema: { type: 'object', properties: {} },
     requiredRole: Role.ReadOnly,
     mutating: false,
+    resultGuidance: READ_GUIDANCE,
     handler: ({ system }) => Promise.resolve(`${system.name}-healthy`),
   };
 
@@ -136,8 +145,21 @@ function text(result: unknown): string {
 }
 
 function parseResults(body: string): SystemResult<unknown>[] {
-  // Results are the JSON block; anything before it is a human-facing prefix.
-  return JSON.parse(body.slice(body.indexOf('['))) as SystemResult<unknown>[];
+  // Results are the pretty-printed JSON block, which is the only part of the
+  // body that starts a line with '[' and ends one with ']'; anything before it
+  // is a human-facing prefix and anything after it is result guidance.
+  const start = body.search(/^\[/m);
+  const end = body.search(/^\]/m);
+  expect(start, body).toBeGreaterThanOrEqual(0);
+  expect(end, body).toBeGreaterThan(start);
+  return JSON.parse(body.slice(start, end + 1)) as SystemResult<unknown>[];
+}
+
+function guidanceBlock(body: string): string | undefined {
+  const match = /\n\nHow to read (\S+) results \(sent once per session[^)]*\):\n([\s\S]*)$/.exec(
+    body,
+  );
+  return match?.[2];
 }
 
 describe('tools/list', () => {
@@ -213,6 +235,86 @@ describe('tools/call — read-only', () => {
     const result = await client.callTool({ name: 'pool_status' });
     expect((result as CallToolResult).isError).toBe(true);
     expect(text(result)).toMatch(/Multiple systems are registered/);
+  });
+});
+
+describe('tools/call — result guidance', () => {
+  // The core attaches a tool's guidance to the first data-bearing result per
+  // session and never advertises it; the adapter's job is to render it every
+  // time it arrives, after the data it is about, and to render nothing when
+  // the core says it was already delivered.
+  it('renders read-only guidance once, after the results, and not on the next call', async () => {
+    const { client } = await setup();
+    const first = text(await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } }));
+    expect(parseResults(first)).toEqual([
+      { system: 'a', status: 'SUCCESS', value: 'a-healthy' },
+      { system: 'b', status: 'SUCCESS', value: 'b-healthy' },
+    ]);
+    expect(guidanceBlock(first)).toBe(READ_GUIDANCE);
+    expect(first).toContain('How to read pool_status results');
+    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(first.indexOf(']'));
+
+    const second = text(await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } }));
+    expect(parseResults(second)).toHaveLength(2);
+    expect(guidanceBlock(second)).toBeUndefined();
+    expect(second).not.toContain('How to read');
+  });
+
+  it('never advertises guidance in tools/list', async () => {
+    const { client } = await setup();
+    const { tools } = await client.listTools();
+    for (const tool of tools) {
+      expect(JSON.stringify(tool)).not.toContain('healthy');
+      expect(JSON.stringify(tool)).not.toContain('on disk');
+    }
+  });
+
+  it('renders mutating guidance on the elicitation-approved execution', async () => {
+    const { client } = await setup({ onElicit: () => ({ action: 'accept' }) });
+    const body = text(
+      await client.callTool({ name: 'snap_create', arguments: { dataset: 'tank/x', systems: 'all' } }),
+    );
+    expect(body.startsWith('Approved by the user in the client UI.')).toBe(true);
+    expect(parseResults(body)).toHaveLength(2);
+    expect(guidanceBlock(body)).toBe(MUTATING_GUIDANCE);
+  });
+
+  it('fallback path: the plan carries no guidance, the confirmed execution does', async () => {
+    const { client } = await setup({ requireElicitation: false });
+    const plan = text(
+      await client.callTool({ name: 'snap_create', arguments: { dataset: 'tank/x', systems: 'all' } }),
+    );
+    expect(plan).not.toContain('How to read');
+    expect(plan).not.toContain(MUTATING_GUIDANCE);
+    const token = /Confirmation token \(single-use, expires\): (\S+)/.exec(plan)?.[1];
+
+    const confirmed = text(
+      await client.callTool({
+        name: 'snap_create',
+        arguments: { dataset: 'tank/x', systems: 'all', confirmation_token: token },
+      }),
+    );
+    expect(parseResults(confirmed)).toHaveLength(2);
+    expect(guidanceBlock(confirmed)).toBe(MUTATING_GUIDANCE);
+  });
+
+  it('renders a bare results block when the outcome carries no guidance', async () => {
+    const outcome = {
+      type: 'RESULTS' as const,
+      tool: 'pool_status',
+      results: [{ system: 'a', status: 'SUCCESS' as const, value: 'a-healthy' }],
+    };
+    const executor = { execute: vi.fn().mockResolvedValue(outcome) } as unknown as ToolExecutor;
+    const server = createServer({
+      catalog: new ToolCatalog(),
+      executor,
+      confirmations: new ConfirmationService(),
+    });
+    const client = new Client({ name: 'test-client', version: '0.0.0' }, {});
+    await connectPair(server, client);
+
+    const body = text(await client.callTool({ name: 'pool_status', arguments: {} }));
+    expect(body).toBe(JSON.stringify(outcome.results, null, 2));
   });
 });
 

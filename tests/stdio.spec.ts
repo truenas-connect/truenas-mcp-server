@@ -99,8 +99,16 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
  * or everything after the prefix line — never "the first [", which would
  * silently couple parsing to the prefix prose staying bracket-free. */
 function parseResults(result: CallToolResult): unknown {
+  // The per-system results are the pretty-printed JSON block, the only part of
+  // the body that starts a line with '[' and ends one with ']'. Anything before
+  // it is a human-facing prefix; anything after it is the tool's result
+  // guidance, which the server appends the first time a tool answers.
   const text = (result.content[0] as { type: 'text'; text: string }).text;
-  return JSON.parse(text.startsWith('[') ? text : text.slice(text.indexOf('\n[') + 1));
+  const start = text.search(/^\[/m);
+  const end = text.search(/^\]/m);
+  expect(start, text).toBeGreaterThanOrEqual(0);
+  expect(end, text).toBeGreaterThan(start);
+  return JSON.parse(text.slice(start, end + 1));
 }
 
 function collect(stream: Stream | null): { text(): string } {
@@ -150,13 +158,7 @@ describe('stdio session (SDK-driven)', () => {
         arguments: { systems: 'all' },
       });
       expect((result as CallToolResult).isError).toBeUndefined();
-      const body = (result as CallToolResult).content[0] as { type: 'text'; text: string };
-      const parsed = JSON.parse(body.text.slice(body.text.indexOf('['))) as {
-        system: string;
-        status: string;
-        value: { name: string; healthy: boolean }[];
-      }[];
-      expect(parsed).toEqual([
+      expect(parseResults(result as CallToolResult)).toEqual([
         {
           system: 'nas-a',
           status: 'SUCCESS',
@@ -168,6 +170,9 @@ describe('stdio session (SDK-driven)', () => {
               size_bytes: 100,
               allocated_bytes: 40,
               free_bytes: 60,
+              // The fixture answers no feature-flag read, and the core reports
+              // "not established" as null rather than as false.
+              feature_flags_current: null,
             },
           ],
         },
@@ -250,6 +255,9 @@ describe('multi-system fan-out', () => {
               size_bytes: 100,
               allocated_bytes: 40,
               free_bytes: 60,
+              // The fixture answers no feature-flag read, and the core reports
+              // "not established" as null rather than as false.
+              feature_flags_current: null,
             },
           ],
         },
