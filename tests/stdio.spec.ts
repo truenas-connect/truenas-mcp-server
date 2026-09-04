@@ -107,9 +107,27 @@ function collect(stream: Stream | null): { text(): string } {
   return { text: () => Buffer.concat(chunks).toString() };
 }
 
-/** Polls until `predicate` holds or ~5s pass; the last check still asserts. */
+/**
+ * Polls until `predicate` holds or ~5s pass, then returns either way — the
+ * caller's next assertion is what fails if it never held.
+ *
+ * A predicate that THROWS counts as "not yet", not as a failure. Two callers
+ * poll a file the server has not necessarily created yet (`readFileSync` on
+ * the trace log and the audit log), and ENOENT is the first symptom of exactly
+ * the race this helper exists to absorb — letting it escape aborts the poll on
+ * its first iteration, turning the tolerated case into the failure. If the file
+ * genuinely never appears, the caller's own read throws the same ENOENT ~5s
+ * later, which is the honest failure.
+ */
 async function until(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 50 && !predicate(); i++) {
+  const holds = (): boolean => {
+    try {
+      return predicate();
+    } catch {
+      return false;
+    }
+  };
+  for (let i = 0; i < 50 && !holds(); i++) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
