@@ -250,12 +250,20 @@ describe('tools/list', () => {
   it('still advertises every tool guidance in `description` — base has not removed the copies', () => {
     // Widened deliberately: the barrel's value union is every export's own
     // type, and the point here is to find tools by shape, not by name.
+    //
+    // `mutating` is what makes the shape tool-specific. `{ name, description }`
+    // alone is also an MCP prompt definition, and near enough a resource one —
+    // a plausible thing for this barrel to gain. One of those would land in
+    // `exported`, fail the set-equality precondition below, and report "the
+    // barrel and the default catalog have diverged", which would be a
+    // misdiagnosis pointing at a missing tool registration that does not exist.
     const exported = (Object.values(mcpBase) as unknown[]).filter(
       (value): value is { name: string; description: string; resultGuidance?: string } =>
         typeof value === 'object' &&
         value !== null &&
         typeof (value as { name?: unknown }).name === 'string' &&
-        typeof (value as { description?: unknown }).description === 'string',
+        typeof (value as { description?: unknown }).description === 'string' &&
+        typeof (value as { mutating?: unknown }).mutating === 'boolean',
     );
     const carriers = exported.filter(
       (tool): tool is typeof tool & { resultGuidance: string } =>

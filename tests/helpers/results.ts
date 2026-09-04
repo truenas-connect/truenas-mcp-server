@@ -8,11 +8,17 @@
  * need to pull the block back out of that, and the rules for doing it safely
  * are a contract with that renderer rather than anything obvious:
  *
- * - the block is found by its own shape: its '[' and ']' each start a line, or
- *   it is the single line '[]'. Never "the first [" or "the rest of the text",
- *   which would couple parsing to both surrounding prose blocks staying
+ * - the block is found by its own shape: its '[' and ']' each own a whole line,
+ *   or it is the single line '[]'. Never "the first [" or "the rest of the
+ *   text", which would couple parsing to both surrounding prose blocks staying
  *   bracket-free — and neither is true. Guidance may open a line with '[', and
  *   a nested empty array inside a value puts ']' well before the block's close.
+ * - both alternatives are anchored on the right, so the empty case matches a
+ *   line that IS '[]' rather than one that merely starts with it. Unanchored,
+ *   a prefix line like "[] see below" would match and parse cleanly to an
+ *   empty array — the one input shape where this returns a confident wrong
+ *   answer instead of throwing. Anchored, that body falls to the second
+ *   alternative, fails JSON.parse and is loud.
  * - `end` is exposed because ordering assertions need it. Re-deriving it with
  *   `search(/^\]/m)` returns -1 for the single-line '[]' block, and any
  *   "guidance comes after the data" check then passes against -1 without
@@ -21,7 +27,7 @@
  * Duplicating that in two spec files made the contract two copies that could
  * drift apart on the next change to the separator or the prefix.
  */
-const RESULTS_BLOCK = /^(?:\[\]|\[[\s\S]*?^\])/m;
+const RESULTS_BLOCK = /^(?:\[\]$|\[[\s\S]*?^\]$)/m;
 
 /** The results block's JSON, and the index just past its closing bracket. */
 export function resultsBlock(body: string): { json: string; end: number } {

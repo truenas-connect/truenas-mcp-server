@@ -111,19 +111,26 @@ function collect(stream: Stream | null): { text(): string } {
  * Polls until `predicate` holds or ~5s pass, then returns either way — the
  * caller's next assertion is what fails if it never held.
  *
- * A predicate that THROWS counts as "not yet", not as a failure. Two callers
- * poll a file the server has not necessarily created yet (`readFileSync` on
- * the trace log and the audit log), and ENOENT is the first symptom of exactly
- * the race this helper exists to absorb — letting it escape aborts the poll on
- * its first iteration, turning the tolerated case into the failure. If the file
- * genuinely never appears, the caller's own read throws the same ENOENT ~5s
- * later, which is the honest failure.
+ * A predicate that throws ENOENT counts as "not yet", not as a failure. Two
+ * callers poll a file the server has not necessarily created yet
+ * (`readFileSync` on the trace log and the audit log), and ENOENT is the first
+ * symptom of exactly the race this helper exists to absorb — letting it escape
+ * aborts the poll on its first iteration, turning the tolerated case into the
+ * failure. If the file genuinely never appears, the caller's own read throws
+ * the same ENOENT ~5s later, which is the honest failure.
+ *
+ * Only ENOENT. A bare catch would turn a mistyped predicate's TypeError into
+ * 50 silent retries and a 5s stall, and the test would then fail on the next
+ * line with a different error and no trace of the real one.
  */
 async function until(predicate: () => boolean): Promise<void> {
   const holds = (): boolean => {
     try {
       return predicate();
-    } catch {
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
       return false;
     }
   };
