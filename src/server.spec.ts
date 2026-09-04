@@ -234,7 +234,11 @@ describe('tools/list', () => {
   // gated on an adapter rendering the field, which this one now does.
   //
   // Scanning the barrel rather than naming the two current carriers means
-  // every tool base splits from here is covered without an edit.
+  // every barrel-exported tool base splits from here is covered without an
+  // edit. "Barrel-exported" is the real limit and today it is not a narrowing
+  // — base #152 pins the barrel's tool exports against the default catalog —
+  // but that guarantee lives upstream, so the first assertion below pins the
+  // two sets equal here rather than trusting it to hold.
   //
   // When this goes red, that follow-up has begun — and the failure names both
   // partitions, because the loop collects instead of throwing on the first
@@ -252,13 +256,17 @@ describe('tools/list', () => {
   //   mid-migration just fails on every carrier still holding its copy.
   it('still advertises every tool guidance in `description` — base has not removed the copies', () => {
     // Widened deliberately: the barrel's value union is every export's own
-    // type, and the point here is to find carriers by shape, not by name.
-    const carriers = (Object.values(mcpBase) as unknown[]).filter(
-      (value): value is { name: string; resultGuidance: string } =>
+    // type, and the point here is to find tools by shape, not by name.
+    const exported = (Object.values(mcpBase) as unknown[]).filter(
+      (value): value is { name: string; description: string; resultGuidance?: string } =>
         typeof value === 'object' &&
         value !== null &&
         typeof (value as { name?: unknown }).name === 'string' &&
-        typeof (value as { resultGuidance?: unknown }).resultGuidance === 'string',
+        typeof (value as { description?: unknown }).description === 'string',
+    );
+    const carriers = exported.filter(
+      (tool): tool is typeof tool & { resultGuidance: string } =>
+        typeof tool.resultGuidance === 'string',
     );
     expect(carriers.length, 'no exported tool declares resultGuidance').toBeGreaterThan(0);
 
@@ -267,6 +275,17 @@ describe('tools/list', () => {
         .list(Role.Full)
         .map((tool) => [tool.name, tool.description] as const),
     );
+    // The scan's completeness precondition. The barrel is the ONLY place a
+    // carrier can be found: `list()` strips `resultGuidance`, so a catalog tool
+    // base stopped exporting would carry its guidance invisibly here with
+    // nothing on the advertised side to report it against — the one gap the
+    // `unregistered` partition below cannot cover. Pinning the two sets equal
+    // is what stops the scan going quietly blind.
+    expect(
+      exported.map((tool) => tool.name).sort(),
+      'the barrel and the default catalog have diverged, so this scan can no ' +
+        'longer see every tool that might carry guidance',
+    ).toEqual([...advertised.keys()].sort());
     const duplicated: string[] = [];
     const split: string[] = [];
     const unregistered: string[] = [];
@@ -285,26 +304,27 @@ describe('tools/list', () => {
     // `tests/hosts/headless.spec.ts` builds its expectation from the same
     // `createDefaultCatalog()` it compares against, so it pins wire/catalog
     // AGREEMENT rather than membership, and it is tier 3 — nightly, never on
-    // PRs. So the skip is reported here instead of assumed to be someone
+    // PRs. So the skip is reported below instead of assumed to be someone
     // else's.
-    expect(
-      unregistered,
-      `guidance carriers exported by base but absent from the default catalog: ` +
-        `${unregistered.join(', ')}. This tripwire cannot see them. If that is ` +
-        'intended, list them here deliberately.',
-    ).toEqual([]);
     expect(
       duplicated.length + split.length,
       'no guidance carrier is in the default catalog',
     ).toBeGreaterThan(0);
+    // One assertion over both partitions, not one each: a base bump can split
+    // a description AND move a carrier out of the catalog in the same commit,
+    // and sequential assertions would print the first and hide the second.
+    // That is the first-failure-wins shape 40984c3 took out of the loop, and
+    // it survives just as well in the assertions that consume it.
     expect(
-      split,
-      `base has removed the description copy for ${split.length} of ` +
-        `${split.length + duplicated.length} guidance carriers in the catalog. ` +
+      { unregistered, split },
+      `${split.length} of ${split.length + duplicated.length} guidance carriers ` +
+        `in the catalog have had their description copy removed. ` +
         `Split: ${split.join(', ') || 'none'}. ` +
         `Still duplicated: ${duplicated.join(', ') || 'none'}. ` +
-        'See the comment above this test for which of the two remedies applies.',
-    ).toEqual([]);
+        `Exported but not in the catalog, so invisible to this tripwire: ` +
+        `${unregistered.join(', ') || 'none'}. ` +
+        'See the comment above this test for which remedy applies.',
+    ).toEqual({ unregistered: [], split: [] });
   });
 });
 
