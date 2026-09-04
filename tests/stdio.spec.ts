@@ -96,21 +96,29 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
 }
 
 /**
- * The JSON results array out of a tool result's text body. The per-system
- * results are the pretty-printed JSON block: the only part of the body whose
- * '[' and ']' each start a line, or the single line '[]'. Anything before it
- * is a human-facing prefix; anything after it is the tool's result guidance,
- * which the server appends the first time a tool answers in a session. Never
- * "the first [" or "the rest of the text", which would silently couple parsing
- * to both surrounding prose blocks staying bracket-free.
+ * The results block and the index just past it. The per-system results are the
+ * pretty-printed JSON block: the only part of the body whose '[' and ']' each
+ * start a line, or the single line '[]'. Anything before it is a human-facing
+ * prefix; anything after it is the tool's result guidance, which the server
+ * appends the first time a tool answers in a session. Never "the first [" or
+ * "the rest of the text", which would silently couple parsing to both
+ * surrounding prose blocks staying bracket-free.
+ *
+ * Ordering assertions take `end` from here rather than re-deriving it: a
+ * hand-rolled `search(/^\]/m)` returns -1 for the single-line `[]`, which any
+ * "guidance comes after the data" check then passes without comparing anything.
  */
+function resultsBlock(body: string): { json: string; end: number } {
+  const match = /^(?:\[\]|\[[\s\S]*?^\])/m.exec(body);
+  if (match === null) {
+    throw new Error(`No results block in tool result body:\n${body}`);
+  }
+  return { json: match[0], end: match.index + match[0].length };
+}
+
 function parseResults(result: CallToolResult): unknown {
   const text = (result.content[0] as { type: 'text'; text: string }).text;
-  const match = /^(?:\[\]|\[[\s\S]*?^\])/m.exec(text);
-  if (match === null) {
-    throw new Error(`No results block in tool result body:\n${text}`);
-  }
-  return JSON.parse(match[0]);
+  return JSON.parse(resultsBlock(text).json);
 }
 
 function collect(stream: Stream | null): { text(): string } {
@@ -253,7 +261,10 @@ describe('result guidance', () => {
       ]);
       const heading = '\n\nHow to read share_access results (sent once per session';
       expect(first).toContain(heading);
-      expect(first.indexOf(heading)).toBeGreaterThan(first.search(/^\]/m));
+      // Exactly at the block's end, not merely after it: `heading` opens with
+      // the blank line the server puts between the data and the guidance, so
+      // this also pins that nothing is interposed between them.
+      expect(first.indexOf(heading)).toBe(resultsBlock(first).end);
       // The opening of the base's own guidance for this tool, so a base
       // revision that stops attaching it — or attaches something else — fails
       // here rather than leaving the tolerant parser green.

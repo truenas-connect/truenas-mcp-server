@@ -145,16 +145,28 @@ function text(result: unknown): string {
   return (content[0] as { type: 'text'; text: string }).text;
 }
 
-function parseResults(body: string): SystemResult<unknown>[] {
-  // Results are the pretty-printed JSON block: the only part of the body whose
-  // '[' and ']' each start a line, or the single line '[]'. Anything before it
-  // is a human-facing prefix and anything after it is result guidance, so the
-  // block is found by its own shape and neither neighbour can move it.
-  const match = /^(?:\[\]|\[[\s\S]*?^\])/m.exec(body);
+// Results are the pretty-printed JSON block: the only part of the body whose
+// '[' and ']' each start a line, or the single line '[]'. Anything before it is
+// a human-facing prefix and anything after it is result guidance, so the block
+// is found by its own shape and neither neighbour can move it.
+const RESULTS_BLOCK = /^(?:\[\]|\[[\s\S]*?^\])/m;
+
+/**
+ * The block's JSON and the index just past it. Ordering assertions take `end`
+ * from here rather than re-deriving it: a hand-rolled `search(/^\]/m)` returns
+ * -1 for the single-line `[]`, which any "guidance comes after the data" check
+ * then passes without comparing anything.
+ */
+function resultsBlock(body: string): { json: string; end: number } {
+  const match = RESULTS_BLOCK.exec(body);
   if (match === null) {
     throw new Error(`No results block in tool result body:\n${body}`);
   }
-  return JSON.parse(match[0]) as SystemResult<unknown>[];
+  return { json: match[0], end: match.index + match[0].length };
+}
+
+function parseResults(body: string): SystemResult<unknown>[] {
+  return JSON.parse(resultsBlock(body).json) as SystemResult<unknown>[];
 }
 
 function guidanceBlock(body: string): string | undefined {
@@ -221,12 +233,23 @@ describe('tools/list', () => {
   // `description` is the change that actually shrinks the catalog, and it is
   // gated on an adapter rendering the field, which this one now does.
   //
-  // When this test fails, that follow-up has landed. Flip `toContain` to
-  // `not.toContain`: the assertion is then the proof that the duplication is
-  // gone, and the payload win is measured here rather than asserted in a PR
-  // body. Scanning the barrel rather than naming the two current carriers
-  // means every tool base splits from here is covered without an edit, and
-  // they all go red together.
+  // Scanning the barrel rather than naming the two current carriers means
+  // every tool base splits from here is covered without an edit.
+  //
+  // When this goes red, that follow-up has begun — and the failure names both
+  // partitions, because the loop collects instead of throwing on the first
+  // mismatch. Base is expected to split tool by tool, so a first-mismatch
+  // assertion would report one carrier and hide the rest of the migration.
+  //
+  // The remedy depends on which state you are in, and only one of the two is
+  // a matcher flip:
+  //
+  // - base has removed EVERY copy → invert this test, asserting `duplicated`
+  //   is empty rather than `split`. It then proves the duplication is gone,
+  //   and the payload win is measured here rather than asserted in a PR body.
+  // - base is PART-WAY through → do not flip. Partition the expectation
+  //   instead, listing the carriers already split; flipping the matcher
+  //   mid-migration just fails on every carrier still holding its copy.
   it('still advertises every tool guidance in `description` — base has not removed the copies', () => {
     // Widened deliberately: the barrel's value union is every export's own
     // type, and the point here is to find carriers by shape, not by name.
@@ -244,7 +267,8 @@ describe('tools/list', () => {
         .list(Role.Full)
         .map((tool) => [tool.name, tool.description] as const),
     );
-    let checked = 0;
+    const duplicated: string[] = [];
+    const split: string[] = [];
     for (const tool of carriers) {
       const description = advertised.get(tool.name);
       // A carrier the default catalog does not register is out of scope here;
@@ -252,10 +276,20 @@ describe('tools/list', () => {
       if (description === undefined) {
         continue;
       }
-      checked += 1;
-      expect(description, tool.name).toContain(tool.resultGuidance);
+      (description.includes(tool.resultGuidance) ? duplicated : split).push(tool.name);
     }
-    expect(checked, 'no guidance carrier is in the default catalog').toBeGreaterThan(0);
+    expect(
+      duplicated.length + split.length,
+      'no guidance carrier is in the default catalog',
+    ).toBeGreaterThan(0);
+    expect(
+      split,
+      `base has removed the description copy for ${split.length} of ` +
+        `${split.length + duplicated.length} guidance carriers in the catalog. ` +
+        `Split: ${split.join(', ') || 'none'}. ` +
+        `Still duplicated: ${duplicated.join(', ') || 'none'}. ` +
+        'See the comment above this test for which of the two remedies applies.',
+    ).toEqual([]);
   });
 });
 
@@ -298,7 +332,7 @@ describe('tools/call — result guidance', () => {
     ]);
     expect(guidanceBlock(first)).toBe(READ_GUIDANCE);
     expect(first).toContain('How to read pool_status results');
-    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(first.search(/^\]/m));
+    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(resultsBlock(first).end);
 
     const second = text(await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } }));
     expect(parseResults(second)).toHaveLength(2);
