@@ -39,6 +39,20 @@ function fakeClient(name) {
             const [snapshot] = params ?? [];
             return of({ name: `${snapshot?.dataset}@${snapshot?.name}` });
           }
+          case 'filesystem.getacl': {
+            // The trivial POSIX ACL share_access reads for the export below.
+            const [path] = params ?? [];
+            return of({
+              path,
+              acltype: 'POSIX1E',
+              trivial: true,
+              user: 'root',
+              group: 'wheel',
+              uid: 0,
+              gid: 0,
+              acl: [],
+            });
+          }
           default:
             throw new Error(`fixture: unexpected api call "${method}" on ${name}`);
         }
@@ -63,6 +77,27 @@ function fakeClient(name) {
           case 'pool.dataset.query':
             return of([
               { id: 'tank/data', pool: 'tank', type: 'FILESYSTEM', mountpoint: '/mnt/tank/data' },
+            ]);
+          // One NFS export and no SMB shares: share_access is the smallest
+          // catalog tool that carries result guidance, and an NFS export keeps
+          // it to the two share lists plus the filesystem ACL above.
+          case 'sharing.smb.query':
+            return of([]);
+          case 'sharing.nfs.query':
+            return of([
+              {
+                id: 1,
+                path: '/mnt/tank/data',
+                enabled: true,
+                ro: false,
+                comment: '',
+                hosts: [],
+                networks: [],
+                mapall_user: '',
+                mapall_group: '',
+                maproot_user: '',
+                maproot_group: '',
+              },
             ]);
           default:
             throw new Error(`fixture: unexpected api query "${method}" on ${name}`);
