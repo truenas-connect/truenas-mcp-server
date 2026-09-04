@@ -269,15 +269,30 @@ describe('tools/list', () => {
     );
     const duplicated: string[] = [];
     const split: string[] = [];
+    const unregistered: string[] = [];
     for (const tool of carriers) {
       const description = advertised.get(tool.name);
-      // A carrier the default catalog does not register is out of scope here;
-      // `tests/hosts/headless.spec.ts` owns catalog membership.
       if (description === undefined) {
+        unregistered.push(tool.name);
         continue;
       }
       (description.includes(tool.resultGuidance) ? duplicated : split).push(tool.name);
     }
+    // A carrier the default catalog does not register is beyond this
+    // tripwire's reach, and skipping it quietly would let the test cover less
+    // than its name claims — with two carriers today, one going unregistered
+    // leaves the other holding the whole assertion. Nothing else guards this:
+    // `tests/hosts/headless.spec.ts` builds its expectation from the same
+    // `createDefaultCatalog()` it compares against, so it pins wire/catalog
+    // AGREEMENT rather than membership, and it is tier 3 — nightly, never on
+    // PRs. So the skip is reported here instead of assumed to be someone
+    // else's.
+    expect(
+      unregistered,
+      `guidance carriers exported by base but absent from the default catalog: ` +
+        `${unregistered.join(', ')}. This tripwire cannot see them. If that is ` +
+        'intended, list them here deliberately.',
+    ).toEqual([]);
     expect(
       duplicated.length + split.length,
       'no guidance carrier is in the default catalog',
