@@ -97,20 +97,20 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
 
 /**
  * The JSON results array out of a tool result's text body. The per-system
- * results are the pretty-printed JSON block, the only part of the body that
- * starts a line with '[' and ends one with ']'. Anything before it is a
- * human-facing prefix; anything after it is the tool's result guidance, which
- * the server appends the first time a tool answers in a session. Never "the
- * first [" or "the rest of the text", which would silently couple parsing to
- * both surrounding prose blocks staying bracket-free.
+ * results are the pretty-printed JSON block: the only part of the body whose
+ * '[' and ']' each start a line, or the single line '[]'. Anything before it
+ * is a human-facing prefix; anything after it is the tool's result guidance,
+ * which the server appends the first time a tool answers in a session. Never
+ * "the first [" or "the rest of the text", which would silently couple parsing
+ * to both surrounding prose blocks staying bracket-free.
  */
 function parseResults(result: CallToolResult): unknown {
   const text = (result.content[0] as { type: 'text'; text: string }).text;
-  const start = text.search(/^\[/m);
-  const end = text.search(/^\]/m);
-  expect(start, text).toBeGreaterThanOrEqual(0);
-  expect(end, text).toBeGreaterThan(start);
-  return JSON.parse(text.slice(start, end + 1));
+  const match = /^(?:\[\]|\[[\s\S]*?^\])/m.exec(text);
+  if (match === null) {
+    throw new Error(`No results block in tool result body:\n${text}`);
+  }
+  return JSON.parse(match[0]);
 }
 
 function collect(stream: Stream | null): { text(): string } {

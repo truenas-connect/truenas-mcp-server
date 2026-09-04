@@ -20,6 +20,7 @@ import {
   type SystemHandle,
   type SystemResult,
 } from '@truenas/mcp-base';
+import * as mcpBase from '@truenas/mcp-base';
 import { describe, expect, it, vi } from 'vitest';
 import { ElicitationGate } from '@/gate';
 import { createServer } from '@/server';
@@ -145,14 +146,15 @@ function text(result: unknown): string {
 }
 
 function parseResults(body: string): SystemResult<unknown>[] {
-  // Results are the pretty-printed JSON block, which is the only part of the
-  // body that starts a line with '[' and ends one with ']'; anything before it
-  // is a human-facing prefix and anything after it is result guidance.
-  const start = body.search(/^\[/m);
-  const end = body.search(/^\]/m);
-  expect(start, body).toBeGreaterThanOrEqual(0);
-  expect(end, body).toBeGreaterThan(start);
-  return JSON.parse(body.slice(start, end + 1)) as SystemResult<unknown>[];
+  // Results are the pretty-printed JSON block: the only part of the body whose
+  // '[' and ']' each start a line, or the single line '[]'. Anything before it
+  // is a human-facing prefix and anything after it is result guidance, so the
+  // block is found by its own shape and neither neighbour can move it.
+  const match = /^(?:\[\]|\[[\s\S]*?^\])/m.exec(body);
+  if (match === null) {
+    throw new Error(`No results block in tool result body:\n${body}`);
+  }
+  return JSON.parse(match[0]) as SystemResult<unknown>[];
 }
 
 function guidanceBlock(body: string): string | undefined {
@@ -211,6 +213,50 @@ describe('tools/list', () => {
       }
     }
   });
+
+  // Tripwire, not a preference. Base #131 COPIED each tool's interpretation
+  // guidance into `resultGuidance`; it did not move it, so the text ships
+  // twice today — once in every `tools/list`, once appended to the first
+  // data-bearing result. The follow-up that deletes the copies from
+  // `description` is the change that actually shrinks the catalog, and it is
+  // gated on an adapter rendering the field, which this one now does.
+  //
+  // When this test fails, that follow-up has landed. Flip `toContain` to
+  // `not.toContain`: the assertion is then the proof that the duplication is
+  // gone, and the payload win is measured here rather than asserted in a PR
+  // body. Scanning the barrel rather than naming the two current carriers
+  // means every tool base splits from here is covered without an edit, and
+  // they all go red together.
+  it('still advertises every tool guidance in `description` — base has not removed the copies', () => {
+    // Widened deliberately: the barrel's value union is every export's own
+    // type, and the point here is to find carriers by shape, not by name.
+    const carriers = (Object.values(mcpBase) as unknown[]).filter(
+      (value): value is { name: string; resultGuidance: string } =>
+        typeof value === 'object' &&
+        value !== null &&
+        typeof (value as { name?: unknown }).name === 'string' &&
+        typeof (value as { resultGuidance?: unknown }).resultGuidance === 'string',
+    );
+    expect(carriers.length, 'no exported tool declares resultGuidance').toBeGreaterThan(0);
+
+    const advertised = new Map(
+      createDefaultCatalog()
+        .list(Role.Full)
+        .map((tool) => [tool.name, tool.description] as const),
+    );
+    let checked = 0;
+    for (const tool of carriers) {
+      const description = advertised.get(tool.name);
+      // A carrier the default catalog does not register is out of scope here;
+      // `tests/hosts/headless.spec.ts` owns catalog membership.
+      if (description === undefined) {
+        continue;
+      }
+      checked += 1;
+      expect(description, tool.name).toContain(tool.resultGuidance);
+    }
+    expect(checked, 'no guidance carrier is in the default catalog').toBeGreaterThan(0);
+  });
 });
 
 describe('tools/call — read-only', () => {
@@ -252,7 +298,7 @@ describe('tools/call — result guidance', () => {
     ]);
     expect(guidanceBlock(first)).toBe(READ_GUIDANCE);
     expect(first).toContain('How to read pool_status results');
-    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(first.indexOf(']'));
+    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(first.search(/^\]/m));
 
     const second = text(await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } }));
     expect(parseResults(second)).toHaveLength(2);
@@ -260,12 +306,28 @@ describe('tools/call — result guidance', () => {
     expect(second).not.toContain('How to read');
   });
 
-  it('never advertises guidance in tools/list', async () => {
+  // An end-to-end claim, and deliberately not an adapter one: `tools/list`
+  // carries no `resultGuidance` field. Base's `list()` strips it before the
+  // adapter is ever handed an `AdvertisedTool`, so spreading the whole tool
+  // inside `toMcpTool` leaks nothing and no mutation here can go red. Kept
+  // because it is the property a host actually depends on, and because it
+  // would break quietly if base ever started advertising the field.
+  //
+  // It is NOT the claim that the guidance TEXT is absent from `tools/list`.
+  // Base #131 copied the text into `resultGuidance` rather than moving it, so
+  // every real description still carries its own guidance verbatim; the
+  // tripwire in the `tools/list` block above is what holds that, and what
+  // goes red when base's follow-up finally removes the copies.
+  it('tools/list carries no resultGuidance field', async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
+    expect(tools).toHaveLength(2);
     for (const tool of tools) {
-      expect(JSON.stringify(tool)).not.toContain('healthy');
-      expect(JSON.stringify(tool)).not.toContain('on disk');
+      expect(tool, tool.name).not.toHaveProperty('resultGuidance');
+      // These fakes' descriptions omit their own guidance, so the strings pin
+      // that `toMcpTool` invents no other route from the field to the wire.
+      expect(JSON.stringify(tool), tool.name).not.toContain('healthy');
+      expect(JSON.stringify(tool), tool.name).not.toContain('on disk');
     }
   });
 
