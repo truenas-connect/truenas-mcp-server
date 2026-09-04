@@ -22,6 +22,7 @@ import {
 } from '@truenas/mcp-base';
 import * as mcpBase from '@truenas/mcp-base';
 import { describe, expect, it, vi } from 'vitest';
+import { resultsBlock } from '../tests/helpers/results';
 import { ElicitationGate } from '@/gate';
 import { createServer } from '@/server';
 
@@ -145,26 +146,6 @@ function text(result: unknown): string {
   return (content[0] as { type: 'text'; text: string }).text;
 }
 
-// Results are the pretty-printed JSON block: the only part of the body whose
-// '[' and ']' each start a line, or the single line '[]'. Anything before it is
-// a human-facing prefix and anything after it is result guidance, so the block
-// is found by its own shape and neither neighbour can move it.
-const RESULTS_BLOCK = /^(?:\[\]|\[[\s\S]*?^\])/m;
-
-/**
- * The block's JSON and the index just past it. Ordering assertions take `end`
- * from here rather than re-deriving it: a hand-rolled `search(/^\]/m)` returns
- * -1 for the single-line `[]`, which any "guidance comes after the data" check
- * then passes without comparing anything.
- */
-function resultsBlock(body: string): { json: string; end: number } {
-  const match = RESULTS_BLOCK.exec(body);
-  if (match === null) {
-    throw new Error(`No results block in tool result body:\n${body}`);
-  }
-  return { json: match[0], end: match.index + match[0].length };
-}
-
 function parseResults(body: string): SystemResult<unknown>[] {
   return JSON.parse(resultsBlock(body).json) as SystemResult<unknown>[];
 }
@@ -237,13 +218,25 @@ describe('tools/list', () => {
   // every barrel-exported tool base splits from here is covered without an
   // edit. "Barrel-exported" is the real limit and today it is not a narrowing
   // — base #152 pins the barrel's tool exports against the default catalog —
-  // but that guarantee lives upstream, so the first assertion below pins the
-  // two sets equal here rather than trusting it to hold.
+  // but that guarantee lives upstream, so the precondition below pins the two
+  // sets equal here rather than trusting it to hold.
   //
-  // When this goes red, that follow-up has begun — and the failure names both
-  // partitions, because the loop collects instead of throwing on the first
-  // mismatch. Base is expected to split tool by tool, so a first-mismatch
-  // assertion would report one carrier and hide the rest of the migration.
+  // That precondition is the ONLY completeness guard, deliberately. It catches
+  // both directions at once: a catalog tool base stopped exporting (invisible
+  // here, and unreportable afterwards because `list()` strips the field) and
+  // an exported carrier the catalog does not register. An `unregistered`
+  // partition alongside it would be dead code — set equality means every
+  // carrier is a catalog key — so there is one guard, not two that overlap.
+  //
+  // It is also the one place a fail-fast is right, against the grain of the
+  // rest of this test. A divergent set means the scan's INPUT is wrong, so the
+  // partitions below would be computed over a set that may be missing tools;
+  // printing them alongside would invite acting on an incomplete migration
+  // report. Fix the divergence, re-run, then read the report.
+  //
+  // Within a valid scan the loop still collects rather than throwing on the
+  // first mismatch, because base is expected to split tool by tool and a
+  // first-mismatch assertion would name one carrier and hide the rest.
   //
   // The remedy depends on which state you are in, and only one of the two is
   // a matcher flip:
@@ -275,56 +268,37 @@ describe('tools/list', () => {
         .list(Role.Full)
         .map((tool) => [tool.name, tool.description] as const),
     );
-    // The scan's completeness precondition. The barrel is the ONLY place a
-    // carrier can be found: `list()` strips `resultGuidance`, so a catalog tool
-    // base stopped exporting would carry its guidance invisibly here with
-    // nothing on the advertised side to report it against — the one gap the
-    // `unregistered` partition below cannot cover. Pinning the two sets equal
-    // is what stops the scan going quietly blind.
+    // The scan's completeness precondition, and its only one. Nothing else
+    // holds it: `tests/hosts/headless.spec.ts` builds its expectation from the
+    // same `createDefaultCatalog()` it compares against, so it pins
+    // wire/catalog AGREEMENT rather than membership, and it is tier 3 —
+    // nightly, never on PRs.
     expect(
       exported.map((tool) => tool.name).sort(),
       'the barrel and the default catalog have diverged, so this scan can no ' +
-        'longer see every tool that might carry guidance',
+        'longer see every tool that might carry guidance. Fix that first: the ' +
+        'partitions below are computed over the exported set and would be ' +
+        'reporting an incomplete migration.',
     ).toEqual([...advertised.keys()].sort());
+
     const duplicated: string[] = [];
     const split: string[] = [];
-    const unregistered: string[] = [];
     for (const tool of carriers) {
-      const description = advertised.get(tool.name);
-      if (description === undefined) {
-        unregistered.push(tool.name);
-        continue;
-      }
+      // Set equality above makes every carrier a key, so the fallback is
+      // unreachable. It is a total expression rather than a branch the type
+      // system cannot see through, and it degrades safely: an empty
+      // description contains no guidance, so a carrier that somehow escaped
+      // the pin lands in `split` and is named by the failure below.
+      const description = advertised.get(tool.name) ?? '';
       (description.includes(tool.resultGuidance) ? duplicated : split).push(tool.name);
     }
-    // A carrier the default catalog does not register is beyond this
-    // tripwire's reach, and skipping it quietly would let the test cover less
-    // than its name claims — with two carriers today, one going unregistered
-    // leaves the other holding the whole assertion. Nothing else guards this:
-    // `tests/hosts/headless.spec.ts` builds its expectation from the same
-    // `createDefaultCatalog()` it compares against, so it pins wire/catalog
-    // AGREEMENT rather than membership, and it is tier 3 — nightly, never on
-    // PRs. So the skip is reported below instead of assumed to be someone
-    // else's.
     expect(
-      duplicated.length + split.length,
-      'no guidance carrier is in the default catalog',
-    ).toBeGreaterThan(0);
-    // One assertion over both partitions, not one each: a base bump can split
-    // a description AND move a carrier out of the catalog in the same commit,
-    // and sequential assertions would print the first and hide the second.
-    // That is the first-failure-wins shape 40984c3 took out of the loop, and
-    // it survives just as well in the assertions that consume it.
-    expect(
-      { unregistered, split },
-      `${split.length} of ${split.length + duplicated.length} guidance carriers ` +
-        `in the catalog have had their description copy removed. ` +
-        `Split: ${split.join(', ') || 'none'}. ` +
+      split,
+      `${split.length} of ${carriers.length} guidance carriers have had their ` +
+        `description copy removed. Split: ${split.join(', ') || 'none'}. ` +
         `Still duplicated: ${duplicated.join(', ') || 'none'}. ` +
-        `Exported but not in the catalog, so invisible to this tripwire: ` +
-        `${unregistered.join(', ') || 'none'}. ` +
         'See the comment above this test for which remedy applies.',
-    ).toEqual({ unregistered: [], split: [] });
+    ).toEqual([]);
   });
 });
 

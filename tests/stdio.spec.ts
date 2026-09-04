@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LATEST_PROTOCOL_VERSION, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { resultsBlock } from './helpers/results';
 
 /**
  * Tier 2b: a real MCP session, over real stdio pipes, against the built
@@ -93,27 +94,6 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
   // tests using this helper assert nothing on it.
   transport.stderr?.on('data', () => {});
   return { client, close: () => client.close() };
-}
-
-/**
- * The results block and the index just past it. The per-system results are the
- * pretty-printed JSON block: the only part of the body whose '[' and ']' each
- * start a line, or the single line '[]'. Anything before it is a human-facing
- * prefix; anything after it is the tool's result guidance, which the server
- * appends the first time a tool answers in a session. Never "the first [" or
- * "the rest of the text", which would silently couple parsing to both
- * surrounding prose blocks staying bracket-free.
- *
- * Ordering assertions take `end` from here rather than re-deriving it: a
- * hand-rolled `search(/^\]/m)` returns -1 for the single-line `[]`, which any
- * "guidance comes after the data" check then passes without comparing anything.
- */
-function resultsBlock(body: string): { json: string; end: number } {
-  const match = /^(?:\[\]|\[[\s\S]*?^\])/m.exec(body);
-  if (match === null) {
-    throw new Error(`No results block in tool result body:\n${body}`);
-  }
-  return { json: match[0], end: match.index + match[0].length };
 }
 
 function parseResults(result: CallToolResult): unknown {
