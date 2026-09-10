@@ -13,7 +13,10 @@ export default defineConfig({
   test: {
     environment: 'node',
     globals: true,
-    include: ['src/**/*.spec.ts'],
+    // tests/helpers/ holds shared spec logic — parsers for the wire shapes the
+    // tier-2 suite reads. Its own unit tests belong here in tier 0/1, not in
+    // the dist tier that consumes them: they need no build and no subprocess.
+    include: ['src/**/*.spec.ts', 'tests/helpers/**/*.spec.ts'],
     coverage: {
       provider: 'v8',
       // Narrows the untested-file scan to src. Vitest 3 already pulls

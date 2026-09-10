@@ -8,6 +8,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { LATEST_PROTOCOL_VERSION, type CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { resultsBlock } from './helpers/results';
 
 /**
  * Tier 2b: a real MCP session, over real stdio pipes, against the built
@@ -95,22 +96,9 @@ async function connectSession(args: string[]): Promise<{ client: Client; close()
   return { client, close: () => client.close() };
 }
 
-/**
- * The JSON results array out of a tool result's text body. The per-system
- * results are the pretty-printed JSON block, the only part of the body that
- * starts a line with '[' and ends one with ']'. Anything before it is a
- * human-facing prefix; anything after it is the tool's result guidance, which
- * the server appends the first time a tool answers in a session. Never "the
- * first [" or "the rest of the text", which would silently couple parsing to
- * both surrounding prose blocks staying bracket-free.
- */
 function parseResults(result: CallToolResult): unknown {
   const text = (result.content[0] as { type: 'text'; text: string }).text;
-  const start = text.search(/^\[/m);
-  const end = text.search(/^\]/m);
-  expect(start, text).toBeGreaterThanOrEqual(0);
-  expect(end, text).toBeGreaterThan(start);
-  return JSON.parse(text.slice(start, end + 1));
+  return JSON.parse(resultsBlock(text).json);
 }
 
 function collect(stream: Stream | null): { text(): string } {
@@ -119,9 +107,34 @@ function collect(stream: Stream | null): { text(): string } {
   return { text: () => Buffer.concat(chunks).toString() };
 }
 
-/** Polls until `predicate` holds or ~5s pass; the last check still asserts. */
+/**
+ * Polls until `predicate` holds or ~5s pass, then returns either way — the
+ * caller's next assertion is what fails if it never held.
+ *
+ * A predicate that throws ENOENT counts as "not yet", not as a failure. Two
+ * callers poll a file the server has not necessarily created yet
+ * (`readFileSync` on the trace log and the audit log), and ENOENT is the first
+ * symptom of exactly the race this helper exists to absorb — letting it escape
+ * aborts the poll on its first iteration, turning the tolerated case into the
+ * failure. If the file genuinely never appears, the caller's own read throws
+ * the same ENOENT ~5s later, which is the honest failure.
+ *
+ * Only ENOENT. A bare catch would turn a mistyped predicate's TypeError into
+ * 50 silent retries and a 5s stall, and the test would then fail on the next
+ * line with a different error and no trace of the real one.
+ */
 async function until(predicate: () => boolean): Promise<void> {
-  for (let i = 0; i < 50 && !predicate(); i++) {
+  const holds = (): boolean => {
+    try {
+      return predicate();
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+        throw error;
+      }
+      return false;
+    }
+  };
+  for (let i = 0; i < 50 && !holds(); i++) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
@@ -253,7 +266,10 @@ describe('result guidance', () => {
       ]);
       const heading = '\n\nHow to read share_access results (sent once per session';
       expect(first).toContain(heading);
-      expect(first.indexOf(heading)).toBeGreaterThan(first.search(/^\]/m));
+      // Exactly at the block's end, not merely after it: `heading` opens with
+      // the blank line the server puts between the data and the guidance, so
+      // this also pins that nothing is interposed between them.
+      expect(first.indexOf(heading)).toBe(resultsBlock(first).end);
       // The opening of the base's own guidance for this tool, so a base
       // revision that stops attaching it — or attaches something else — fails
       // here rather than leaving the tolerant parser green.

@@ -20,7 +20,9 @@ import {
   type SystemHandle,
   type SystemResult,
 } from '@truenas/mcp-base';
+import * as mcpBase from '@truenas/mcp-base';
 import { describe, expect, it, vi } from 'vitest';
+import { resultsBlock } from '../tests/helpers/results';
 import { ElicitationGate } from '@/gate';
 import { createServer } from '@/server';
 
@@ -145,14 +147,7 @@ function text(result: unknown): string {
 }
 
 function parseResults(body: string): SystemResult<unknown>[] {
-  // Results are the pretty-printed JSON block, which is the only part of the
-  // body that starts a line with '[' and ends one with ']'; anything before it
-  // is a human-facing prefix and anything after it is result guidance.
-  const start = body.search(/^\[/m);
-  const end = body.search(/^\]/m);
-  expect(start, body).toBeGreaterThanOrEqual(0);
-  expect(end, body).toBeGreaterThan(start);
-  return JSON.parse(body.slice(start, end + 1)) as SystemResult<unknown>[];
+  return JSON.parse(resultsBlock(body).json) as SystemResult<unknown>[];
 }
 
 function guidanceBlock(body: string): string | undefined {
@@ -211,6 +206,108 @@ describe('tools/list', () => {
       }
     }
   });
+
+  // Tripwire, not a preference. Base #131 COPIED each tool's interpretation
+  // guidance into `resultGuidance`; it did not move it, so the text ships
+  // twice today — once in every `tools/list`, once appended to the first
+  // data-bearing result. The follow-up that deletes the copies from
+  // `description` is the change that actually shrinks the catalog, and it is
+  // gated on an adapter rendering the field, which this one now does.
+  //
+  // Scanning the barrel rather than naming the two current carriers means
+  // every barrel-exported tool base splits from here is covered without an
+  // edit. "Barrel-exported" is the real limit and today it is not a narrowing
+  // — base #152 pins the barrel's tool exports against the default catalog —
+  // but that guarantee lives upstream, so the precondition below pins the two
+  // sets equal here rather than trusting it to hold.
+  //
+  // That precondition is the ONLY completeness guard, deliberately. It catches
+  // both directions at once: a catalog tool base stopped exporting (invisible
+  // here, and unreportable afterwards because `list()` strips the field) and
+  // an exported carrier the catalog does not register. An `unregistered`
+  // partition alongside it would be dead code — set equality means every
+  // carrier is a catalog key — so there is one guard, not two that overlap.
+  //
+  // It is also the one place a fail-fast is right, against the grain of the
+  // rest of this test. A divergent set means the scan's INPUT is wrong, so the
+  // partitions below would be computed over a set that may be missing tools;
+  // printing them alongside would invite acting on an incomplete migration
+  // report. Fix the divergence, re-run, then read the report.
+  //
+  // Within a valid scan the loop still collects rather than throwing on the
+  // first mismatch, because base is expected to split tool by tool and a
+  // first-mismatch assertion would name one carrier and hide the rest.
+  //
+  // The remedy depends on which state you are in, and only one of the two is
+  // a matcher flip:
+  //
+  // - base has removed EVERY copy → invert this test, asserting `duplicated`
+  //   is empty rather than `split`. It then proves the duplication is gone,
+  //   and the payload win is measured here rather than asserted in a PR body.
+  // - base is PART-WAY through → do not flip. Partition the expectation
+  //   instead, listing the carriers already split; flipping the matcher
+  //   mid-migration just fails on every carrier still holding its copy.
+  it('still advertises every tool guidance in `description` — base has not removed the copies', () => {
+    // Widened deliberately: the barrel's value union is every export's own
+    // type, and the point here is to find tools by shape, not by name.
+    //
+    // `mutating` is what makes the shape tool-specific. `{ name, description }`
+    // alone is also an MCP prompt definition, and near enough a resource one —
+    // a plausible thing for this barrel to gain. One of those would land in
+    // `exported`, fail the set-equality precondition below, and report "the
+    // barrel and the default catalog have diverged", which would be a
+    // misdiagnosis pointing at a missing tool registration that does not exist.
+    const exported = (Object.values(mcpBase) as unknown[]).filter(
+      (value): value is { name: string; description: string; resultGuidance?: string } =>
+        typeof value === 'object' &&
+        value !== null &&
+        typeof (value as { name?: unknown }).name === 'string' &&
+        typeof (value as { description?: unknown }).description === 'string' &&
+        typeof (value as { mutating?: unknown }).mutating === 'boolean',
+    );
+    const carriers = exported.filter(
+      (tool): tool is typeof tool & { resultGuidance: string } =>
+        typeof tool.resultGuidance === 'string',
+    );
+    expect(carriers.length, 'no exported tool declares resultGuidance').toBeGreaterThan(0);
+
+    const advertised = new Map(
+      createDefaultCatalog()
+        .list(Role.Full)
+        .map((tool) => [tool.name, tool.description] as const),
+    );
+    // The scan's completeness precondition, and its only one. Nothing else
+    // holds it: `tests/hosts/headless.spec.ts` builds its expectation from the
+    // same `createDefaultCatalog()` it compares against, so it pins
+    // wire/catalog AGREEMENT rather than membership, and it is tier 3 —
+    // nightly, never on PRs.
+    expect(
+      exported.map((tool) => tool.name).sort(),
+      'the barrel and the default catalog have diverged, so this scan can no ' +
+        'longer see every tool that might carry guidance. Fix that first: the ' +
+        'partitions below are computed over the exported set and would be ' +
+        'reporting an incomplete migration.',
+    ).toEqual([...advertised.keys()].sort());
+
+    const duplicated: string[] = [];
+    const split: string[] = [];
+    for (const tool of carriers) {
+      // Set equality above makes every carrier a key, so the fallback is
+      // unreachable. It is a total expression rather than a branch the type
+      // system cannot see through, and it degrades safely: an empty
+      // description contains no guidance, so a carrier that somehow escaped
+      // the pin lands in `split` and is named by the failure below.
+      const description = advertised.get(tool.name) ?? '';
+      (description.includes(tool.resultGuidance) ? duplicated : split).push(tool.name);
+    }
+    expect(
+      split,
+      `${split.length} of ${carriers.length} guidance carriers have had their ` +
+        `description copy removed. Split: ${split.join(', ') || 'none'}. ` +
+        `Still duplicated: ${duplicated.join(', ') || 'none'}. ` +
+        'See the comment above this test for which remedy applies.',
+    ).toEqual([]);
+  });
 });
 
 describe('tools/call — read-only', () => {
@@ -252,7 +349,7 @@ describe('tools/call — result guidance', () => {
     ]);
     expect(guidanceBlock(first)).toBe(READ_GUIDANCE);
     expect(first).toContain('How to read pool_status results');
-    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(first.indexOf(']'));
+    expect(first.indexOf(READ_GUIDANCE)).toBeGreaterThan(resultsBlock(first).end);
 
     const second = text(await client.callTool({ name: 'pool_status', arguments: { systems: 'all' } }));
     expect(parseResults(second)).toHaveLength(2);
@@ -260,12 +357,28 @@ describe('tools/call — result guidance', () => {
     expect(second).not.toContain('How to read');
   });
 
-  it('never advertises guidance in tools/list', async () => {
+  // An end-to-end claim, and deliberately not an adapter one: `tools/list`
+  // carries no `resultGuidance` field. Base's `list()` strips it before the
+  // adapter is ever handed an `AdvertisedTool`, so spreading the whole tool
+  // inside `toMcpTool` leaks nothing and no mutation here can go red. Kept
+  // because it is the property a host actually depends on, and because it
+  // would break quietly if base ever started advertising the field.
+  //
+  // It is NOT the claim that the guidance TEXT is absent from `tools/list`.
+  // Base #131 copied the text into `resultGuidance` rather than moving it, so
+  // every real description still carries its own guidance verbatim; the
+  // tripwire in the `tools/list` block above is what holds that, and what
+  // goes red when base's follow-up finally removes the copies.
+  it('tools/list carries no resultGuidance field', async () => {
     const { client } = await setup();
     const { tools } = await client.listTools();
+    expect(tools).toHaveLength(2);
     for (const tool of tools) {
-      expect(JSON.stringify(tool)).not.toContain('healthy');
-      expect(JSON.stringify(tool)).not.toContain('on disk');
+      expect(tool, tool.name).not.toHaveProperty('resultGuidance');
+      // These fakes' descriptions omit their own guidance, so the strings pin
+      // that `toMcpTool` invents no other route from the field to the wire.
+      expect(JSON.stringify(tool), tool.name).not.toContain('healthy');
+      expect(JSON.stringify(tool), tool.name).not.toContain('on disk');
     }
   });
 
