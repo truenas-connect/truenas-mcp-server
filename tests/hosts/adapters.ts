@@ -21,11 +21,25 @@ export interface HostAdapter {
   headlessArgs(fixture: FixturePaths, prompt: string): string[];
   /** argv to launch the interactive TUI; omit for hosts without one. */
   interactiveArgs?(fixture: FixturePaths): string[];
-  /** First-run dialogs that may precede the input box (trust prompts,
-   * telemetry consent). Answered at most once each, only if seen. */
-  startupDialogs?: { pattern: RegExp; response: string }[];
-  /** Screen pattern that means the TUI's input box is ready. */
-  readyPattern?: RegExp;
+  /**
+   * First-run dialogs that may precede the input box (trust prompts,
+   * telemetry consent). Answered at most once each, only if seen.
+   *
+   * Prefer `choose`: it moves the selection onto the option whose text
+   * matches, then confirms, so the answer follows the option rather than its
+   * position. A bare `response` presses keys at whatever is selected, which is
+   * how this suite broke — claude-code's trust dialog now defaults to
+   * "No, exit", so the `\r` that used to accept it began declining it and
+   * ending the session before MCP ever connected. Use `response` only for a
+   * dialog whose shape `choose` cannot drive, such as goose's horizontal
+   * selector. Exactly one of the two is required — a dialog declaring neither
+   * would have to fall back to a bare confirm, which is the defect itself, so
+   * the type refuses to express it.
+   */
+  startupDialogs?: (
+    | { pattern: RegExp; choose: RegExp; response?: never }
+    | { pattern: RegExp; response: string; choose?: never }
+  )[];
   /** Keystrokes declining the rendered elicitation, sent in order. */
   declineKeys?: string[];
   /** What the host's initialize request is expected to advertise. */
@@ -73,11 +87,26 @@ export const claudeCode: HostAdapter = {
     '--strict-mcp-config',
     '--allowedTools',
     ALLOWED_TOOLS,
+    // The host's own startup/MCP log — the only artefact that explains a host
+    // that never reaches our server at all, or reaches it and then stops. It
+    // is what identified an expired credential as the cause of a silent
+    // no-tool-call, where the screen said only "Login expired".
+    //
+    // It implies debug mode, which adds one header line to the TUI
+    // ("Debug mode enabled · logging to <path>"). That is a real cost and it
+    // is accepted: the screen assertions here check that specific plan
+    // strings APPEAR, and the one absence assertion looks for a system name
+    // that a temp-dir path cannot contain. An earlier probe reported the
+    // screen unchanged; it had died at the trust dialog before the header
+    // rendered, so that comparison was worthless.
+    '--debug-file',
+    fixture.hostLogPath,
   ],
   // In a fresh directory the trust dialog swallows anything typed before it
   // is answered — the cause of the suite's originally inconclusive probe.
-  startupDialogs: [{ pattern: /trust this folder/i, response: '\r' }],
-  readyPattern: /\? for shortcuts/,
+  // Chosen by text: the dialog's default is "No, exit", so confirming the
+  // selection as it stands exits the host.
+  startupDialogs: [{ pattern: /trust this folder/i, choose: /Yes, I trust this folder/ }],
   declineKeys: ['\x1b'],
   expectsElicitation: true,
   deterministicUnattendedShape: true,
@@ -124,8 +153,9 @@ export const goose: HostAdapter = {
   // First run shows a telemetry-consent dialog; right-arrow + enter answers
   // No. The approval prompt is a Yes/No selector defaulting to Yes, declined
   // the same way (probed 2026-08-10: sends action=decline).
+  // A horizontal Yes/No selector, which `choose` cannot drive: right-arrow
+  // then enter answers No.
   startupDialogs: [{ pattern: /Share anonymous usage data/i, response: '\x1b[C\r' }],
-  readyPattern: /goose is ready/,
   declineKeys: ['\x1b[C', '\r'],
   // Probed 2026-08-10 (goose-cli 1.45.0): advertises elicitation — the
   // plan's "likely not" guess was wrong. Unattended it fails closed, but not

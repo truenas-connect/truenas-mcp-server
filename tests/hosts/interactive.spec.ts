@@ -10,6 +10,7 @@ import {
   elicitationAccepts,
   elicitationAnswers,
   FIXTURE_SYSTEMS,
+  hostConnected,
   hostEnv,
   readAudit,
   readTrace,
@@ -32,12 +33,35 @@ import {
  * inconclusive probe died before tools/call because hosts render first-run
  * dialogs (Claude Code's trust-folder prompt, goose's telemetry consent)
  * before the input box exists — anything typed earlier lands in the dialog.
- * The driver answers an adapter's declared startupDialogs first, then waits
- * for its readyPattern before typing.
+ * The driver answers an adapter's declared startupDialogs first.
+ *
+ * Readiness (2026-09-10): it then waits on OUR WIRE, not on the screen. The
+ * screen gate this replaced watched for a per-host banner, and when
+ * claude-code's trust dialog changed its default to "No, exit" the suite's
+ * bare `\r` began declining it — so the host exited, and the failure read
+ * "TUI never became ready: expected '────…' to match /? for shortcuts/",
+ * naming a banner that had never changed. A gate that can only see the screen
+ * can only blame the screen. `hostConnected` asserts the host reached our
+ * server; the screen is left to the assertions that are genuinely about what a
+ * human sees.
  */
 
 const COLS = 120;
 const ROWS = 40;
+
+/** The glyph a TUI list draws beside the selected option, and the arrow keys
+ * that move it. */
+const CURSOR = '\u276f';
+const DOWN = '\x1b[B';
+const UP = '\x1b[A';
+/** Kills the current input line; readline-style boxes share this binding. */
+const CLEAR_LINE = '\x15';
+
+/** Screen text with every run of whitespace removed, so a needle can be
+ * matched across the input box's wrap points. */
+function squash(text: string): string {
+  return text.replace(/\s+/g, '');
+}
 
 const FULL_PROMPT =
   'Call snapshots_create with dataset "tank/data", name "probe2", systems "all". ' +
@@ -68,7 +92,6 @@ interface PlanSession {
 async function driveToPlan(
   adapter: HostAdapter,
   argv: string[],
-  ready: RegExp,
   fixture: FixturePaths,
   dir: string,
   prompt: string,
@@ -95,24 +118,57 @@ async function driveToPlan(
     return lines.join('\n');
   };
 
-  // Reach the input box, answering first-run dialogs if they appear.
+  // Answer first-run dialogs until the host reaches our server. Both halves
+  // share one loop because the dialogs are what stand between launch and the
+  // connection: an unanswered one means `hostConnected` never goes true.
   const answered = new Set<RegExp>();
   await until(() => {
     const screen = screenText();
     for (const dialog of adapter.startupDialogs ?? []) {
-      if (!answered.has(dialog.pattern) && dialog.pattern.test(screen)) {
+      if (answered.has(dialog.pattern) || !dialog.pattern.test(screen)) {
+        continue;
+      }
+      if (dialog.choose === undefined) {
         pty.write(dialog.response);
+        answered.add(dialog.pattern);
+      } else if (confirmChoice(pty, screen, dialog.choose)) {
         answered.add(dialog.pattern);
       }
     }
-    return ready.test(screen);
+    return hostConnected(tracePath);
   }, 120_000);
-  expect(screenText(), 'TUI never became ready').toMatch(ready);
+  expect(
+    hostConnected(tracePath),
+    `host never connected to the server; see ${fixture.hostLogPath}. Last screen:\n${screenText()}`,
+  ).toBe(true);
 
-  // One mutating call; the brief pause keeps the Enter from being
-  // treated as part of a paste.
+  // One mutating call. Connected is not the same as accepting keystrokes — a
+  // host can have its MCP session up while the input box is still assembling,
+  // and anything typed then is swallowed — so the Enter is withheld until the
+  // box demonstrably holds the prompt.
+  //
+  // The echo is the one screen check this driver keeps, and deliberately so:
+  // it looks for OUR OWN text coming back, which cannot go stale the way a
+  // banner can. Whitespace is stripped from both sides because the box wraps
+  // at the terminal width and a fixed needle would straddle the fold.
+  //
+  // This also replaces the fixed pause that used to stand in for it. A timer
+  // is a guess about a machine that may be slower than the one it was tuned
+  // on; an echo is the fact the timer was approximating.
+  const typed = (): boolean => squash(screenText()).includes(squash(prompt));
   pty.write(prompt);
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  await until(typed, 30_000);
+  if (!typed()) {
+    // Still assembling when we typed. Clear whatever fragment landed, so the
+    // retry cannot leave the box holding the prompt twice, and type again.
+    pty.write(CLEAR_LINE);
+    pty.write(prompt);
+    await until(typed, 30_000);
+  }
+  expect(
+    typed(),
+    `the prompt never reached the input box; see ${fixture.hostLogPath}. Last screen:\n${screenText()}`,
+  ).toBe(true);
   pty.write('\r');
 
   // The gate fires: our server sends the elicitation. Generous budget —
@@ -143,6 +199,35 @@ async function driveToPlan(
     targets,
     snapshotId: snapshotId as string,
   };
+}
+
+/**
+ * Moves a vertical list dialog's selection onto the option matching `choose`
+ * and confirms it, one step per poll; returns whether it confirmed.
+ *
+ * Answering by option text rather than by position is the point. The previous
+ * approach pressed Enter on whatever was selected, which silently inverted
+ * when claude-code's trust dialog changed its default from the accepting
+ * option to "No, exit".
+ *
+ * Assumes the cursor glyph appears once on a dialog screen. If the list will
+ * not move the cursor onto the option, the caller's `until` budget expires and
+ * the failure names the connection that never happened, with the host's own
+ * log alongside it.
+ */
+function confirmChoice(pty: IPty, screen: string, choose: RegExp): boolean {
+  const lines = screen.split('\n');
+  const target = lines.findIndex((line) => choose.test(line));
+  const cursor = lines.findIndex((line) => line.includes(CURSOR));
+  if (target < 0 || cursor < 0) {
+    return false;
+  }
+  if (cursor === target) {
+    pty.write('\r');
+    return true;
+  }
+  pty.write(cursor < target ? DOWN : UP);
+  return false;
 }
 
 /** Deliberate semantics — do not "fix" this into a single-snapshot check:
@@ -185,9 +270,8 @@ async function declineAndExpectNothingExecuted(
 
 for (const adapter of adapters) {
   const interactive = adapter.interactiveArgs;
-  const ready = adapter.readyPattern;
   const declineKeys = adapter.declineKeys;
-  if (!interactive || !ready || !declineKeys) {
+  if (!interactive || !declineKeys) {
     continue;
   }
 
@@ -210,7 +294,6 @@ for (const adapter of adapters) {
       const session = await driveToPlan(
         adapter,
         interactive(fixture),
-        ready,
         fixture,
         dir,
         FULL_PROMPT,
@@ -245,7 +328,6 @@ for (const adapter of adapters) {
       const session = await driveToPlan(
         adapter,
         interactive(fixture),
-        ready,
         fixture,
         dir,
         NARROW_PROMPT,
