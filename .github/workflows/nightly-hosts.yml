@@ -157,4 +157,21 @@ jobs:
           # claude-code stayed dark across every green run before this.
           echo "goose: enabled"
           echo "claude-code: ${HAS_CLAUDE_AUTH}"
+          # Both hosts install unpinned, on purpose: this tier exists to catch
+          # real-host drift, and pinning would make it green by making it stop
+          # testing that. Drift is only useful if a break is attributable
+          # though, and it was not — claude-code changed its trust dialog's
+          # default to "No, exit", the suite's blind Enter began declining it,
+          # and the failure blamed a banner. Record the versions so the next
+          # one is a diff away.
+          goose --version || true
+          if [ "${HAS_CLAUDE_AUTH}" = "true" ]; then
+            claude --version || true
+            # Whether a host can reach a configured server at all, answered
+            # before any TUI is driven. Separates "our server is broken" from
+            # "the driver is", which is the ambiguity that cost the most time
+            # here. Never fails the job: it reports on the ambient config, not
+            # on the per-test fixture the suite builds.
+            claude mcp list || true
+          fi
           yarn test:hosts

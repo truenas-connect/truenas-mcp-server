@@ -41,6 +41,10 @@ export interface FixturePaths {
   mcpConfigPath: string;
   tracePath: string;
   auditPath: string;
+  /** Where a host may write its own startup/MCP log. Ours records the wire;
+   * this records the host's side of it, which is the only place a failure to
+   * connect at all can be explained from. */
+  hostLogPath: string;
   /** The fixture as one command line, for hosts that take a command rather
    * than a config file (goose's --with-extension). */
   serverCommand: string;
@@ -53,6 +57,7 @@ export function setUpFixture(dir: string): FixturePaths {
   const auditPath = join(dir, 'audit.jsonl');
   const tracePath = join(dir, 'trace.jsonl');
   const mcpConfigPath = join(dir, 'mcp.json');
+  const hostLogPath = join(dir, 'host.log');
   writeFileSync(
     configPath,
     JSON.stringify({
@@ -77,6 +82,7 @@ export function setUpFixture(dir: string): FixturePaths {
     mcpConfigPath,
     tracePath,
     auditPath,
+    hostLogPath,
     // Hosts that take this as one string split it with shell rules, so each
     // argument is quoted — node's install path or the tmp dir containing a
     // space must not shear an argument in two.
@@ -141,6 +147,24 @@ export function readTrace(tracePath: string): TraceFrame[] {
     .split('\n')
     .filter(Boolean)
     .map((line) => JSON.parse(line) as TraceFrame);
+}
+
+/**
+ * Whether the host has finished connecting to OUR server: it has asked for the
+ * catalog, which it can only do after `initialize`.
+ *
+ * This is the interactive suite's readiness gate, and it is deliberately not a
+ * screen pattern. A TUI's banner is the host's own chrome — it changes with
+ * their releases, carries no promise to us, and when it stops matching the
+ * failure names the banner rather than the cause. Measured 2026-09-10 against
+ * claude-code 2.1.260: this fires at ~2s, where the screen gate it replaced
+ * allowed 120s and then reported the wrong thing.
+ *
+ * It is also host-agnostic, so both adapters share one gate instead of each
+ * carrying a regex that can go stale on its own schedule.
+ */
+export function hostConnected(tracePath: string): boolean {
+  return readTrace(tracePath).some((f) => f.dir === 'recv' && f.message.method === 'tools/list');
 }
 
 /** Every elicitation answer the client returned (recv frames with an
