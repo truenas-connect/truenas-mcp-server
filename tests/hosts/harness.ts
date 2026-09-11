@@ -150,8 +150,10 @@ export function readTrace(tracePath: string): TraceFrame[] {
 }
 
 /**
- * Whether the host has finished connecting to OUR server: it has asked for the
- * catalog, which it can only do after `initialize`.
+ * Whether the host has finished connecting to OUR server: it has sent
+ * `notifications/initialized`, the protocol's own end-of-handshake signal,
+ * which a client emits exactly once after `initialize` succeeds and before
+ * any other request.
  *
  * This is the interactive suite's readiness gate, and it is deliberately not a
  * screen pattern. A TUI's banner is the host's own chrome — it changes with
@@ -161,10 +163,19 @@ export function readTrace(tracePath: string): TraceFrame[] {
  * allowed 120s and then reported the wrong thing.
  *
  * It is also host-agnostic, so both adapters share one gate instead of each
- * carrying a regex that can go stale on its own schedule.
+ * carrying a regex that can go stale on its own schedule. The signal has to be
+ * the handshake and not a later request: an earlier version gated on
+ * `tools/list`, which claude-code sends at startup but goose defers until the
+ * first prompt is submitted — and the driver does not submit the prompt until
+ * this gate opens, so goose deadlocked and was reported as never having
+ * connected (observed 2026-09-11, goose-cli against the tier-2 fixture:
+ * initialize, notifications/initialized, prompts/list, then nothing for the
+ * full 120s budget).
  */
 export function hostConnected(tracePath: string): boolean {
-  return readTrace(tracePath).some((f) => f.dir === 'recv' && f.message.method === 'tools/list');
+  return readTrace(tracePath).some(
+    (f) => f.dir === 'recv' && f.message.method === 'notifications/initialized',
+  );
 }
 
 /** Every elicitation answer the client returned (recv frames with an
