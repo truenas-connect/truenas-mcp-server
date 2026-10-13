@@ -30,8 +30,10 @@ export interface HostAdapter {
   /** Keystrokes declining the rendered elicitation, sent in order. */
   declineKeys?: string[];
   /**
-   * Workspace setup before the TUI is spawned. Returns the cwd to use when
-   * it must differ from the temp dir (Claude keys trust on the realpath).
+   * Workspace setup before the host is spawned (headless or interactive).
+   * Returns the cwd to use when it must differ from the temp dir (Claude
+   * keys trust on the realpath). Headless deliberately keeps the checkout
+   * as cwd when this hook is missing.
    */
   prepareWorkspace?(dir: string, env: Record<string, string>): string;
   /** What the host's initialize request is expected to advertise. */
