@@ -82,24 +82,39 @@ jobs:
           # OLLAMA_CONTEXT_LENGTH, not a model swap: ollama defaults num_ctx to
           # 4096 whatever the model supports, and qwen3:4b-instruct natively
           # supports 262144 — so the 4096 was a server setting we never set,
-          # not a limit of the model. Since the catalog grew to 41 tools the
-          # tools/list payload alone is ~32.9k tokens, so every request was
-          # rejected outright: "request (32892 tokens) exceeds the available
-          # context size (4096 tokens)". 40960 clears that with ~8k left for
-          # the conversation across the adapters' 8 turns.
+          # not a limit of the model. At 41 tools the tools/list prompt was
+          # 32892 tokens and 40960 (40×1024, the next multiple of 1024 above
+          # that prompt plus ~8k of conversation) cleared it. The catalog is
+          # now 75 tools. Nightly run 38215788171 measured the prompt at 66781
+          # tokens against that window, and ollama rejected every goose
+          # request: "request (66781 tokens) exceeds the available context
+          # size (40960 tokens)". 66781 + 8000 = 74781; 75776 is 74×1024, the
+          # same rounding, leaving 8995 tokens of conversation headroom.
           #
-          # This buys headroom; it does not make the payload smaller. The KV
-          # cache is allocated for the whole window up front — order of 6GB
-          # for this model at this size, against the runner's 16GB — so raising
-          # it further is not free, and the durable fix is the ~29k tokens of
-          # tool *descriptions* (86.9% of the payload), tracked separately.
+          # KV cache is allocated for the whole window up front, in f16, which
+          # is ollama's default (this step does not set OLLAMA_KV_CACHE_TYPE).
+          # qwen3:4b is 36 layers, 8 KV heads, head_dim 128, so a token is
+          # 2*36*8*128*2 = 147456 bytes. That is 6.04GB at 40960 — the "order
+          # of 6GB" the previous setting was costed at — and 11.2GB at 75776.
+          # The weight blob this job pulls is 2.5GB. ubuntu-latest has 16GB.
+          # 11.2 + 2.5 plus the runner OS, ollama, node, and llama.cpp's
+          # compute buffer is at or over 16GB, so the OOM killer is likely.
+          # This is the experiment anyway: grow the window rather than trim
+          # the catalog. If the runner dies in this step (the empty
+          # /api/generate below is what allocates the cache) or on the first
+          # goose request, the next move is the one already named in
+          # src/server.spec.ts — delete the guidance copies from tool
+          # descriptions in mcp-base — not a larger window.
           #
           # A model's own Modelfile num_ctx would take precedence over this and
           # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
           # pins it). Checked against the registry: qwen3:4b-instruct sets only
           # repeat_penalty/stop/temperature/top_k/top_p, no num_ctx — so the
-          # variable applies. Re-check that before swapping GOOSE_MODEL.
-          OLLAMA_CONTEXT_LENGTH=40960 nohup ollama serve >/dev/null 2>&1 &
+          # variable applies. The Hugging Face config's max_position_embeddings
+          # is 40960, the window this is leaving; llama.cpp still honors a
+          # larger n_ctx. `ollama ps` below records the context that actually
+          # came up. Re-check the Modelfile before swapping GOOSE_MODEL.
+          OLLAMA_CONTEXT_LENGTH=75776 nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
           ollama list >/dev/null
           ollama pull qwen3:4b-instruct
@@ -127,8 +142,10 @@ jobs:
           # ~/.local/bin is already on GITHUB_PATH from the goose step.
           curl -fsSL https://claude.ai/install.sh | bash
           # Skip the first-run onboarding wizard (theme picker), which would
-          # otherwise precede the input box; the trust-folder dialog is the
-          # test driver's job, this one is environment setup.
+          # otherwise precede the input box. Per-folder trust cannot be seeded
+          # here: the temp cwd does not exist until a test, and this file is
+          # what that test merges hasTrustDialogAccepted into. A later step
+          # that overwrites it would drop that trust.
           echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
       - name: Run host suite
         env:

@@ -16,7 +16,11 @@ export default defineConfig({
     // tests/helpers/ holds shared spec logic — parsers for the wire shapes the
     // tier-2 suite reads. Its own unit tests belong here in tier 0/1, not in
     // the dist tier that consumes them: they need no build and no subprocess.
-    include: ['src/**/*.spec.ts', 'tests/helpers/**/*.spec.ts'],
+    // tests/hosts/ is the tier-3 suite (vitest.hosts.config.ts) and stays out
+    // of this run. claude-trust.spec.ts is the exception: it merges a JSON
+    // file and never spawns a host, so a broken trust seed fails here instead
+    // of on the nightly.
+    include: ['src/**/*.spec.ts', 'tests/helpers/**/*.spec.ts', 'tests/hosts/claude-trust.spec.ts'],
     coverage: {
       provider: 'v8',
       // Narrows the untested-file scan to src. Vitest 3 already pulls

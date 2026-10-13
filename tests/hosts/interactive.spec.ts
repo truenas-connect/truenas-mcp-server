@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Terminal } from '@xterm/headless';
@@ -32,8 +32,10 @@ import {
  * inconclusive probe died before tools/call because hosts render first-run
  * dialogs (Claude Code's trust-folder prompt, goose's telemetry consent)
  * before the input box exists — anything typed earlier lands in the dialog.
- * The driver answers an adapter's declared startupDialogs first, then waits
- * for its readyPattern before typing.
+ * The driver runs an adapter's prepareWorkspace, answers any startupDialogs
+ * that still appear, then waits for its readyPattern before typing.
+ * Claude's trust dialog is prepared rather than answered: its highlighted
+ * default is "No, exit", and confirming that row leaves the TUI unready.
  */
 
 const COLS = 120;
@@ -75,13 +77,17 @@ async function driveToPlan(
   onSpawn: (pty: IPty) => void,
 ): Promise<PlanSession> {
   const { tracePath, auditPath } = fixture;
+  const env = { ...hostEnv(), ...adapter.env };
+  // prepareWorkspace may return a different cwd than `dir` — Claude records
+  // trust against the realpath, and the process has to be started there.
+  const cwd = adapter.prepareWorkspace?.(dir, env) ?? realpathSync(dir);
   const term = new Terminal({ cols: COLS, rows: ROWS, allowProposedApi: true });
   const pty = ptySpawn(adapter.command, argv, {
     name: 'xterm-256color',
     cols: COLS,
     rows: ROWS,
-    cwd: dir,
-    env: { ...hostEnv(), ...adapter.env },
+    cwd,
+    env,
   });
   onSpawn(pty);
   pty.onData((data) => term.write(data));

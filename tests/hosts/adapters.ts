@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process';
+import { trustClaudeFolder } from './claude-trust';
 import { ALLOWED_TOOLS, hostOnPath, type FixturePaths } from './harness';
 
 /**
@@ -28,6 +29,11 @@ export interface HostAdapter {
   readyPattern?: RegExp;
   /** Keystrokes declining the rendered elicitation, sent in order. */
   declineKeys?: string[];
+  /**
+   * Workspace setup before the TUI is spawned. Returns the cwd to use when
+   * it must differ from the temp dir (Claude keys trust on the realpath).
+   */
+  prepareWorkspace?(dir: string, env: Record<string, string>): string;
   /** What the host's initialize request is expected to advertise. */
   expectsElicitation: boolean;
   /**
@@ -74,9 +80,12 @@ export const claudeCode: HostAdapter = {
     '--allowedTools',
     ALLOWED_TOOLS,
   ],
-  // In a fresh directory the trust dialog swallows anything typed before it
-  // is answered — the cause of the suite's originally inconclusive probe.
-  startupDialogs: [{ pattern: /trust this folder/i, response: '\r' }],
+  // The temp cwd is marked trusted before spawn, which is what keeps this
+  // dialog from appearing. It is still answered if it does: the highlighted
+  // default is "No, exit", and Enter confirms that row, so the TUI never
+  // becomes ready. Down, then Enter, selects "Yes, I trust this folder".
+  prepareWorkspace: trustClaudeFolder,
+  startupDialogs: [{ pattern: /trust this folder/i, response: '\x1b[B\r' }],
   readyPattern: /\? for shortcuts/,
   declineKeys: ['\x1b'],
   expectsElicitation: true,
