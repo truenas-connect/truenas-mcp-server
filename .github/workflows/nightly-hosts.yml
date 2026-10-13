@@ -12,7 +12,7 @@ name: Nightly hosts (tier 3)
 #
 # The job runs on truenas-lab-large, a fresh machine per job with more CPU
 # and memory than the 16GB GitHub-hosted runner this used to use. The image
-# is not assumed to ship Node or to allow sudo.
+# is not assumed to ship Node.
 
 on:
   schedule:
@@ -78,29 +78,7 @@ jobs:
       # The suite drives the tier-2 fixture from dist/.
       - run: yarn build
       - name: Install ollama
-        run: |
-          # install.sh needs sudo, extracts under /usr or /usr/local, creates
-          # a systemd unit, and can apt-get CUDA drivers. This image is not
-          # assumed to allow sudo. Unpack the same Linux archive into
-          # ~/.local. .tgz so the image does not need zstd. No driver package
-          # is installed.
-          arch=$(uname -m)
-          case "$arch" in
-            x86_64) arch=amd64 ;;
-            aarch64|arm64) arch=arm64 ;;
-            *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
-          esac
-          prefix="$HOME/.local"
-          mkdir -p "$prefix"
-          curl -fsSL "https://ollama.com/download/ollama-linux-${arch}.tgz" \
-            | tar -xzf - -C "$prefix"
-          if [ ! -x "$prefix/bin/ollama" ]; then
-            echo "archive did not contain bin/ollama under $prefix" >&2
-            find "$prefix" -name ollama -type f >&2 || true
-            exit 1
-          fi
-          echo "$prefix/bin" >> "$GITHUB_PATH"
-          "$prefix/bin/ollama" --version
+        run: curl -fsSL https://ollama.com/install.sh | sh
       - name: Cache the model
         uses: actions/cache@v4
         with:
@@ -108,11 +86,13 @@ jobs:
           key: ollama-qwen3-4b-instruct
       - name: Start ollama and pull the model
         run: |
-          # The binary is in ~/.local/bin, so this server runs as the runner
-          # user and models land in ~/.ollama/models — the cached path. Each
-          # job gets a fresh machine, so the default port 11434 is free. The
-          # backgrounded server persists across the job's later steps; the
-          # runner reaps it with the job.
+          # The installer starts a systemd service running as the `ollama`
+          # system user, whose model dir (/usr/share/ollama/.ollama) the cache
+          # step above cannot restore into. Replace it with a server running
+          # as the runner user, so models land in ~/.ollama/models — the
+          # cached path — and the 2.5GB pull is a no-op on warm runs. The
+          # backgrounded server persists across the job's later steps.
+          sudo systemctl disable --now ollama 2>/dev/null || true
           # OLLAMA_CONTEXT_LENGTH, not a model swap: ollama defaults num_ctx to
           # 4096 whatever the model supports, and qwen3:4b-instruct natively
           # supports 262144 — so the 4096 was a server setting we never set,
