@@ -96,15 +96,19 @@ jobs:
           # qwen3:4b is 36 layers, 8 KV heads, head_dim 128, so a token is
           # 2*36*8*128*2 = 147456 bytes. That is 6.04GB at 40960 — the "order
           # of 6GB" the previous setting was costed at — and 11.2GB at 75776.
-          # The weight blob this job pulls is 2.5GB. ubuntu-latest has 16GB.
-          # 11.2 + 2.5 plus the runner OS, ollama, node, and llama.cpp's
-          # compute buffer is at or over 16GB, so the OOM killer is likely.
-          # This is the experiment anyway: grow the window rather than trim
-          # the catalog. If the runner dies in this step (the empty
-          # /api/generate below is what allocates the cache) or on the first
-          # goose request, the next move is the one already named in
-          # src/server.spec.ts — delete the guidance copies from tool
-          # descriptions in mcp-base — not a larger window.
+          # The weight blob this job pulls is 2.5GB, and ubuntu-latest has 16GB,
+          # so 11.2 + 2.5 plus the OS and llama.cpp's compute buffer looked
+          # likely to OOM. Run 38430326157 checked it: this step, including
+          # the empty /api/generate that allocates the cache, finished in 9
+          # seconds and the runner was not killed. Goose still made no tool
+          # call — headless came back with empty output inside its watch, and
+          # both interactive tests waited out their elicitation budget — and
+          # there was no exceed_context_size 400. The prompt fits and the
+          # machine held the cache. What did not finish is the CPU prefill of
+          # those ~66k tokens. A quantized KV cache would not change that
+          # count, so the next move is the one src/server.spec.ts already
+          # names: delete the guidance copies from tool descriptions in
+          # mcp-base.
           #
           # A model's own Modelfile num_ctx would take precedence over this and
           # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
