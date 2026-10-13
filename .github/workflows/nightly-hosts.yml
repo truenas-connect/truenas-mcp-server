@@ -9,6 +9,12 @@ name: Nightly hosts (tier 3)
 # (pinned to haiku — a few cents of model spend per run). Without a secret,
 # the claude install step is skipped, the binary stays absent, and the claude
 # rows skip — the job degrades to Ollama-only rather than failing.
+#
+# The job runs on the self-hosted runner labeled truenas-lab-large, a
+# persistent machine with more CPU and memory than the 16GB GitHub-hosted
+# runner this used to use. Nothing in the job may write the machine user's
+# own home: HOME, the XDG dirs, and CLAUDE_CONFIG_DIR are all pointed at a
+# directory under RUNNER_TEMP that disappears with the job.
 
 on:
   schedule:
@@ -18,18 +24,33 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  # One run at a time. The serve port below belongs to this workflow, and a
+  # second job on the same machine would bind it or reap the first job's
+  # server. cancel-in-progress stays false so a manual dispatch waits out
+  # the scheduled run instead of killing it. Revisit the group if this
+  # label ever spreads across more than one machine: those machines do not
+  # share the port, and this group would serialize them anyway.
+  group: nightly-hosts
+  cancel-in-progress: false
+
 jobs:
   hosts:
     name: real MCP hosts (goose/Ollama + claude-code)
-    runs-on: ubuntu-latest
+    # No other workflow in this repo names a self-hosted runner — ci.yml
+    # and notify-agent-review.yml use ubuntu-latest — so there is no local
+    # label convention to copy. A runner registered with the label
+    # truenas-lab-large also carries the implicit self-hosted label, and
+    # both are required to select it.
+    runs-on: [self-hosted, truenas-lab-large]
     # Headroom for the worst case: six tests, each bounded by the suite's
     # 20-minute testTimeout and run strictly in sequence (fileParallelism:
     # false), plus ~6 minutes of setup — 6 x 20 + 6 = 126. The margin above
     # that exists so a slow run fails on a per-test diagnostic assertion,
     # never an opaque job-level kill with nothing to read. This number grows
     # with the test count: raise it alongside vitest.hosts.config.ts, whose
-    # comment carries the per-test arithmetic. Runner minutes are free on a
-    # public repo; a healthy run finishes far sooner.
+    # comment carries the per-test arithmetic. The cap also bounds how long
+    # one run occupies the lab machine. A healthy run finishes far sooner.
     timeout-minutes: 140
     env:
       # Gate only — step-level `if:` cannot reference secrets.* directly, and
@@ -55,30 +76,176 @@ jobs:
       HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY != '' || secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN != '' || secrets.UX_CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
+      # setup-node's yarn cache shells out to `yarn --version`. ubuntu-latest
+      # has Node already, so corepack can publish the shim before that. A
+      # lab runner is not assumed to: install Node first, enable corepack
+      # against that Node, then restore the cache. The second setup-node
+      # finds the Node it just installed.
+      - name: Enable corepack when Node is already installed
+        run: |
+          if command -v corepack >/dev/null 2>&1; then
+            corepack enable
+          else
+            echo "no preinstalled Node; setup-node installs it next"
+          fi
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: corepack enable
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: yarn
+      - name: Prepare a job-scoped home
+        id: home
+        run: |
+          # RUNNER_TEMP is removed when the job ends, so a config, binary,
+          # or model written here cannot survive into the machine user's
+          # real home. CLAUDE_CONFIG_DIR is set to that same directory,
+          # which makes `$CLAUDE_CONFIG_DIR/.claude.json` and
+          # `$HOME/.claude.json` one file — the file the claude install
+          # step seeds and the one tests/hosts/claude-trust.ts merges
+          # per-folder trust into. Leaving the variable to the machine
+          # would let a pre-set value redirect both onto the host. The
+          # XDG dirs follow for the same reason: goose writes its config
+          # under XDG_CONFIG_HOME when that is set.
+          dir="$RUNNER_TEMP/nightly-home"
+          mkdir -p \
+            "$dir/.local/bin" \
+            "$dir/.ollama/models" \
+            "$dir/.config" \
+            "$dir/.cache" \
+            "$dir/.local/share" \
+            "$dir/.local/state"
+          {
+            echo "HOME=$dir"
+            echo "CLAUDE_CONFIG_DIR=$dir"
+            echo "XDG_CONFIG_HOME=$dir/.config"
+            echo "XDG_CACHE_HOME=$dir/.cache"
+            echo "XDG_DATA_HOME=$dir/.local/share"
+            echo "XDG_STATE_HOME=$dir/.local/state"
+            # Not 11434. A lab ollama already listening on the default
+            # port belongs to the machine; this job binds its own and
+            # the client, the curl below, and goose all follow OLLAMA_HOST.
+            echo "OLLAMA_HOST=127.0.0.1:11435"
+            echo "OLLAMA_MODELS=$dir/.ollama/models"
+          } >> "$GITHUB_ENV"
+          echo "$dir/.local/bin" >> "$GITHUB_PATH"
+          echo "dir=$dir" >> "$GITHUB_OUTPUT"
+          echo "models=$dir/.ollama/models" >> "$GITHUB_OUTPUT"
+
+          # Reaped at the start of the next run as well as at the end of
+          # this one. OLLAMA_PID lives only in this job's environment, so
+          # a runner kill that skips the cleanup step leaves the serve
+          # holding the port. The next job finds that process by the port.
+          # The heredoc body shares the step's indent; the workflow parser
+          # strips that indent, and the shebang check below fails the step
+          # if a future edit indents the body further and the file is no
+          # longer a script.
+          cat > "$RUNNER_TEMP/reap-ollama-11435.sh" << 'EOF'
+          #!/bin/sh
+          # Stop an `ollama serve` listening on port 11435. Anything else
+          # on that port is left alone, and port 11434 is never examined.
+          # Only this user's processes are considered: a serve the runner
+          # user did not start cannot be signalled from here, and scanning
+          # every process on the machine is not this job's business.
+          set -eu
+          port_hex=$(printf '%04X' 11435)
+          found=""
+          pids=$(ps -u "$(id -u)" -o pid=)
+          for table in /proc/net/tcp /proc/net/tcp6; do
+            [ -r "$table" ] || continue
+            # LISTEN is state 0A. Column 2 is the local address (…:PORT)
+            # and column 10 is the socket inode. Both /proc tables print
+            # the port in uppercase hex, which is what printf %04X emits.
+            inodes=$(awk -v p=":${port_hex}" '$4 == "0A" && $2 ~ p"$" { print $10 }' "$table" || true)
+            for inode in $inodes; do
+              [ -n "$inode" ] && [ "$inode" != "0" ] || continue
+              for pid in $pids; do
+                proc_dir="/proc/$pid"
+                [ -r "$proc_dir/cmdline" ] || continue
+                [ -d "$proc_dir/fd" ] || continue
+                matched=0
+                for fd in "$proc_dir"/fd/*; do
+                  target=$(readlink "$fd" 2>/dev/null || true)
+                  if [ "$target" = "socket:[$inode]" ]; then
+                    matched=1
+                    break
+                  fi
+                done
+                [ "$matched" = 1 ] || continue
+                cmd=$(tr '\0' ' ' < "$proc_dir/cmdline" 2>/dev/null || true)
+                case "$cmd" in
+                  *ollama*serve*)
+                    echo "stopping ollama serve pid $pid on port 11435"
+                    kill "$pid" 2>/dev/null || true
+                    found="$found $pid"
+                    ;;
+                  *)
+                    echo "port 11435 is held by pid $pid ($cmd); not an ollama serve, leaving it" >&2
+                    ;;
+                esac
+              done
+            done
+          done
+          # A wedged serve would keep the port and the next bind would fail.
+          if [ -n "$found" ]; then
+            sleep 2
+            for pid in $found; do
+              if kill -0 "$pid" 2>/dev/null; then
+                echo "ollama serve pid $pid did not exit; sending SIGKILL" >&2
+                kill -9 "$pid" 2>/dev/null || true
+              fi
+            done
+          fi
+          EOF
+          head -n 1 "$RUNNER_TEMP/reap-ollama-11435.sh" | grep -q '^#!/bin/sh$'
+          chmod +x "$RUNNER_TEMP/reap-ollama-11435.sh"
       - run: yarn install --immutable
       # The suite drives the tier-2 fixture from dist/.
       - run: yarn build
       - name: Install ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
+        run: |
+          # The official install.sh requires sudo on a non-root Linux,
+          # extracts under /usr or /usr/local, creates a systemd user and
+          # unit, and can apt-get CUDA drivers. This job used to pipe
+          # that script and then `systemctl disable --now ollama`, which
+          # on a lab host would stop a unit that belongs to the machine.
+          # Unpack the same Linux archive the script extracts, into this
+          # job's HOME, and do not touch systemd or the package manager.
+          # .tgz rather than .tar.zst so the runner does not need zstd.
+          # No CUDA or ROCm driver is installed; the binary's own bundled
+          # runners are whatever the archive carries.
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
+          esac
+          prefix="$HOME/.local"
+          mkdir -p "$prefix"
+          curl -fsSL "https://ollama.com/download/ollama-linux-${arch}.tgz" \
+            | tar -xzf - -C "$prefix"
+          if [ ! -x "$prefix/bin/ollama" ]; then
+            echo "archive did not contain bin/ollama under $prefix" >&2
+            find "$prefix" -name ollama -type f >&2 || true
+            exit 1
+          fi
+          ollama --version
       - name: Cache the model
         uses: actions/cache@v4
         with:
-          path: ~/.ollama/models
+          # The job home, not the machine user's ~/.ollama. OLLAMA_MODELS
+          # points at this path, so a warm cache is what `ollama pull`
+          # finds.
+          path: ${{ steps.home.outputs.models }}
           key: ollama-qwen3-4b-instruct
       - name: Start ollama and pull the model
         run: |
-          # The installer starts a systemd service running as the `ollama`
-          # system user, whose model dir (/usr/share/ollama/.ollama) the cache
-          # step above cannot restore into. Replace it with a server running
-          # as the runner user, so models land in ~/.ollama/models — the
-          # cached path — and the 2.5GB pull is a no-op on warm runs. The
-          # backgrounded server persists across the job's later steps.
-          sudo systemctl disable --now ollama 2>/dev/null || true
+          # A previous run whose runner was killed never reached the
+          # cleanup step. Reap that serve before binding. The script
+          # only signals an `ollama serve` on this job's port.
+          "$RUNNER_TEMP/reap-ollama-11435.sh"
           # OLLAMA_CONTEXT_LENGTH, not a model swap: ollama defaults num_ctx to
           # 4096 whatever the model supports, and qwen3:4b-instruct natively
           # supports 262144 — so the 4096 was a server setting we never set,
@@ -96,17 +263,20 @@ jobs:
           # qwen3:4b is 36 layers, 8 KV heads, head_dim 128, so a token is
           # 2*36*8*128*2 = 147456 bytes. That is 6.04GB at 40960 — the "order
           # of 6GB" the previous setting was costed at — and 11.2GB at 75776.
-          # The weight blob this job pulls is 2.5GB, and ubuntu-latest has 16GB,
-          # so 11.2 + 2.5 plus the OS and llama.cpp's compute buffer looked
-          # likely to OOM. Run 38430326157 checked it: this step, including
-          # the empty /api/generate that allocates the cache, finished in 9
-          # seconds and the runner was not killed. Goose still made no tool
-          # call — headless came back with empty output inside its watch, and
-          # both interactive tests waited out their elicitation budget — and
-          # there was no exceed_context_size 400. The prompt fits and the
-          # machine held the cache. What did not finish is the CPU prefill of
-          # those ~66k tokens. A quantized KV cache would not change that
-          # count, so the next move is the one src/server.spec.ts already
+          # The weight blob this job pulls is 2.5GB. On the 16GB GitHub-hosted
+          # runner that sum looked likely to OOM. Run 38430326157 checked it:
+          # this step, including the empty /api/generate that allocates the
+          # cache, finished in 9 seconds and the runner was not killed. Goose
+          # still made no tool call — headless came back with empty output
+          # inside its watch, and both interactive tests waited out their
+          # elicitation budget — and there was no exceed_context_size 400.
+          # The prompt fits and a 16GB machine held the cache. What did not
+          # finish is the CPU prefill of those ~66k tokens. This job now runs
+          # on truenas-lab-large so that prefill has more CPU and more memory
+          # than that 16GB host. The exact size of the lab machine is not
+          # recorded in this repository. A quantized KV cache would not change
+          # the token count; if the larger machine still cannot prefill inside
+          # the watch, the next move is the one src/server.spec.ts already
           # names: delete the guidance copies from tool descriptions in
           # mcp-base.
           #
@@ -118,9 +288,21 @@ jobs:
           # is 40960, the window this is leaving; llama.cpp still honors a
           # larger n_ctx. `ollama ps` below records the context that actually
           # came up. Re-check the Modelfile before swapping GOOSE_MODEL.
-          OLLAMA_CONTEXT_LENGTH=75776 nohup ollama serve >/dev/null 2>&1 &
-          for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
-          ollama list >/dev/null
+          OLLAMA_CONTEXT_LENGTH=75776 nohup ollama serve >"$HOME/ollama-serve.log" 2>&1 &
+          echo "OLLAMA_PID=$!" >> "$GITHUB_ENV"
+          ready=0
+          for _ in $(seq 1 30); do
+            if ollama list >/dev/null 2>&1; then
+              ready=1
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != 1 ]; then
+            echo "ollama did not become ready on $OLLAMA_HOST" >&2
+            cat "$HOME/ollama-serve.log" >&2 || true
+            exit 1
+          fi
           ollama pull qwen3:4b-instruct
           # Load the model and record the context it came up with, so the log
           # says what was actually in force rather than what we asked for. Not
@@ -131,19 +313,24 @@ jobs:
           # it generates nothing. `ollama run` is deliberately avoided here:
           # with an empty argument it can drop into its interactive REPL and
           # hang the job waiting on a stdin that never arrives.
-          curl -sS http://localhost:11434/api/generate \
+          curl -fsS "http://${OLLAMA_HOST}/api/generate" \
             -d '{"model":"qwen3:4b-instruct","prompt":"","keep_alive":"10m"}' \
             >/dev/null || true
           ollama ps || true
       - name: Install goose
         run: |
+          # $HOME/.local/bin is already on PATH. CONFIGURE=false skips
+          # `goose configure` and the shell-rc edit; with a job-scoped
+          # HOME that edit would have been disposable anyway.
           curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \
             | CONFIGURE=false bash
-          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
       - name: Install claude-code
         if: env.HAS_CLAUDE_AUTH == 'true'
         run: |
-          # ~/.local/bin is already on GITHUB_PATH from the goose step.
+          # The installer refuses sudo and writes under $HOME. That home
+          # is the job directory from the prepare step, and
+          # CLAUDE_CONFIG_DIR points at it, so this file is the one
+          # Claude and tests/hosts/claude-trust.ts both open.
           curl -fsSL https://claude.ai/install.sh | bash
           # Skip the first-run onboarding wizard (theme picker), which would
           # otherwise precede the input box. Per-folder trust cannot be seeded
@@ -178,4 +365,26 @@ jobs:
           # claude-code stayed dark across every green run before this.
           echo "goose: enabled"
           echo "claude-code: ${HAS_CLAUDE_AUTH}"
+          echo "HOME: ${HOME}"
+          echo "OLLAMA_HOST: ${OLLAMA_HOST}"
           yarn test:hosts
+      - name: Stop ollama
+        if: always()
+        run: |
+          # `ollama serve` is not a systemd unit and the runner will not
+          # reap it. Stop the pid this job started, then sweep the port
+          # so a re-exec that replaced that pid does not stay resident
+          # for the next job.
+          if [ -n "${OLLAMA_PID:-}" ] && kill -0 "$OLLAMA_PID" 2>/dev/null; then
+            kill "$OLLAMA_PID" 2>/dev/null || true
+            for _ in $(seq 1 10); do
+              kill -0 "$OLLAMA_PID" 2>/dev/null || break
+              sleep 1
+            done
+            if kill -0 "$OLLAMA_PID" 2>/dev/null; then
+              kill -9 "$OLLAMA_PID" 2>/dev/null || true
+            fi
+          fi
+          if [ -x "$RUNNER_TEMP/reap-ollama-11435.sh" ]; then
+            "$RUNNER_TEMP/reap-ollama-11435.sh"
+          fi
