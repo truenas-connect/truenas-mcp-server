@@ -45,9 +45,19 @@ for (const adapter of adapters) {
 
     it('advertises, routes, gates — and never answers accept unattended', async () => {
       const fixture = setUpFixture(dir);
+      const env = { ...hostEnv(), ...adapter.env };
+      // Headless used to inherit the checkout as cwd, which this suite does
+      // not mark trusted. Claude Code v2.1.296 then waited for approval of
+      // the two MCP calls ("Waiting for your approval to execute both MCP
+      // tool calls") instead of sending them, so the read never happened.
+      // The interactive driver trusts its cwd and those calls do arrive.
+      // Same seed, and the process has to be started in the directory that
+      // was seeded or the key does not match.
+      const cwd = adapter.prepareWorkspace?.(dir, env);
 
       const child = spawn(adapter.command, adapter.headlessArgs(fixture, SESSION_PROMPT), {
-        env: { ...hostEnv(), ...adapter.env },
+        ...(cwd ? { cwd } : {}),
+        env,
         stdio: ['ignore', 'pipe', 'pipe'],
       });
       const out: Buffer[] = [];

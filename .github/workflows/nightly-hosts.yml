@@ -9,6 +9,10 @@ name: Nightly hosts (tier 3)
 # (pinned to haiku — a few cents of model spend per run). Without a secret,
 # the claude install step is skipped, the binary stays absent, and the claude
 # rows skip — the job degrades to Ollama-only rather than failing.
+#
+# The job runs on truenas-lab-large, a fresh machine per job with more CPU
+# and memory than the 16GB GitHub-hosted runner this used to use. The image
+# is not assumed to ship Node or to allow sudo.
 
 on:
   schedule:
@@ -21,15 +25,16 @@ permissions:
 jobs:
   hosts:
     name: real MCP hosts (goose/Ollama + claude-code)
-    runs-on: ubuntu-latest
+    # The runner is registered under this label alone.
+    runs-on: truenas-lab-large
     # Headroom for the worst case: six tests, each bounded by the suite's
     # 20-minute testTimeout and run strictly in sequence (fileParallelism:
     # false), plus ~6 minutes of setup — 6 x 20 + 6 = 126. The margin above
     # that exists so a slow run fails on a per-test diagnostic assertion,
     # never an opaque job-level kill with nothing to read. This number grows
     # with the test count: raise it alongside vitest.hosts.config.ts, whose
-    # comment carries the per-test arithmetic. Runner minutes are free on a
-    # public repo; a healthy run finishes far sooner.
+    # comment carries the per-test arithmetic. A healthy run finishes far
+    # sooner.
     timeout-minutes: 140
     env:
       # Gate only — step-level `if:` cannot reference secrets.* directly, and
@@ -55,6 +60,15 @@ jobs:
       HAS_CLAUDE_AUTH: ${{ secrets.TEST_HOSTS_CLAUDE_API_KEY != '' || secrets.TEST_HOSTS_CLAUDE_OAUTH_TOKEN != '' || secrets.UX_CLAUDE_CODE_OAUTH_TOKEN != '' }}
     steps:
       - uses: actions/checkout@v4
+      # The image is not assumed to have Node. setup-node's yarn cache
+      # shells out to `yarn --version`, and `corepack enable` with no
+      # --install-directory writes its shims next to whichever corepack is
+      # first on PATH. Install Node 22 first, enable corepack against that
+      # copy, then restore the cache. A corepack already on PATH is left
+      # alone: a root-owned /usr/bin/corepack fails here with EACCES.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - run: corepack enable
       - uses: actions/setup-node@v4
         with:
@@ -64,7 +78,29 @@ jobs:
       # The suite drives the tier-2 fixture from dist/.
       - run: yarn build
       - name: Install ollama
-        run: curl -fsSL https://ollama.com/install.sh | sh
+        run: |
+          # install.sh needs sudo, extracts under /usr or /usr/local, creates
+          # a systemd unit, and can apt-get CUDA drivers. This image is not
+          # assumed to allow sudo. Unpack the same Linux archive into
+          # ~/.local. .tgz so the image does not need zstd. No driver package
+          # is installed.
+          arch=$(uname -m)
+          case "$arch" in
+            x86_64) arch=amd64 ;;
+            aarch64|arm64) arch=arm64 ;;
+            *) echo "unsupported architecture: $arch" >&2; exit 1 ;;
+          esac
+          prefix="$HOME/.local"
+          mkdir -p "$prefix"
+          curl -fsSL "https://ollama.com/download/ollama-linux-${arch}.tgz" \
+            | tar -xzf - -C "$prefix"
+          if [ ! -x "$prefix/bin/ollama" ]; then
+            echo "archive did not contain bin/ollama under $prefix" >&2
+            find "$prefix" -name ollama -type f >&2 || true
+            exit 1
+          fi
+          echo "$prefix/bin" >> "$GITHUB_PATH"
+          "$prefix/bin/ollama" --version
       - name: Cache the model
         uses: actions/cache@v4
         with:
@@ -72,13 +108,11 @@ jobs:
           key: ollama-qwen3-4b-instruct
       - name: Start ollama and pull the model
         run: |
-          # The installer starts a systemd service running as the `ollama`
-          # system user, whose model dir (/usr/share/ollama/.ollama) the cache
-          # step above cannot restore into. Replace it with a server running
-          # as the runner user, so models land in ~/.ollama/models — the
-          # cached path — and the 2.5GB pull is a no-op on warm runs. The
-          # backgrounded server persists across the job's later steps.
-          sudo systemctl disable --now ollama 2>/dev/null || true
+          # The binary is in ~/.local/bin, so this server runs as the runner
+          # user and models land in ~/.ollama/models — the cached path. Each
+          # job gets a fresh machine, so the default port 11434 is free. The
+          # backgrounded server persists across the job's later steps; the
+          # runner reaps it with the job.
           # OLLAMA_CONTEXT_LENGTH, not a model swap: ollama defaults num_ctx to
           # 4096 whatever the model supports, and qwen3:4b-instruct natively
           # supports 262144 — so the 4096 was a server setting we never set,
@@ -96,15 +130,21 @@ jobs:
           # qwen3:4b is 36 layers, 8 KV heads, head_dim 128, so a token is
           # 2*36*8*128*2 = 147456 bytes. That is 6.04GB at 40960 — the "order
           # of 6GB" the previous setting was costed at — and 11.2GB at 75776.
-          # The weight blob this job pulls is 2.5GB. ubuntu-latest has 16GB.
-          # 11.2 + 2.5 plus the runner OS, ollama, node, and llama.cpp's
-          # compute buffer is at or over 16GB, so the OOM killer is likely.
-          # This is the experiment anyway: grow the window rather than trim
-          # the catalog. If the runner dies in this step (the empty
-          # /api/generate below is what allocates the cache) or on the first
-          # goose request, the next move is the one already named in
-          # src/server.spec.ts — delete the guidance copies from tool
-          # descriptions in mcp-base — not a larger window.
+          # The weight blob this job pulls is 2.5GB. On the 16GB GitHub-hosted
+          # runner that sum looked likely to OOM. Run 38430326157 checked it:
+          # this step, including the empty /api/generate that allocates the
+          # cache, finished in 9 seconds and the runner was not killed. Goose
+          # still made no tool call — headless came back with empty output
+          # inside its watch, and both interactive tests waited out their
+          # elicitation budget — and there was no exceed_context_size 400.
+          # The prompt fits and a 16GB machine held the cache. What did not
+          # finish is the CPU prefill of those ~66k tokens. This job runs on
+          # truenas-lab-large, a fresh machine per job with more CPU and memory
+          # than that 16GB host. The exact size is not recorded here. A
+          # quantized KV cache would not change the token count; if the
+          # prefill still does not finish inside the watch, the next move is
+          # the one src/server.spec.ts already names: delete the guidance
+          # copies from tool descriptions in mcp-base.
           #
           # A model's own Modelfile num_ctx would take precedence over this and
           # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
