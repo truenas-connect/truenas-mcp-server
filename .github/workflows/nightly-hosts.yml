@@ -10,9 +10,8 @@ name: Nightly hosts (tier 3)
 # the claude install step is skipped, the binary stays absent, and the claude
 # rows skip — the job degrades to Ollama-only rather than failing.
 #
-# The job runs on truenas-lab-large, a fresh machine per job with more CPU
-# and memory than the 16GB GitHub-hosted runner this used to use. The image
-# is not assumed to ship Node.
+# The job runs on truenas-lab-large, a fresh machine per job: 16GB, no swap,
+# 8 vCPU. The image is not assumed to ship Node.
 
 on:
   schedule:
@@ -105,26 +104,39 @@ jobs:
           # size (40960 tokens)". 66781 + 8000 = 74781; 75776 is 74×1024, the
           # same rounding, leaving 8995 tokens of conversation headroom.
           #
-          # KV cache is allocated for the whole window up front, in f16, which
-          # is ollama's default (this step does not set OLLAMA_KV_CACHE_TYPE).
-          # qwen3:4b is 36 layers, 8 KV heads, head_dim 128, so a token is
-          # 2*36*8*128*2 = 147456 bytes. That is 6.04GB at 40960 — the "order
-          # of 6GB" the previous setting was costed at — and 11.2GB at 75776.
-          # The weight blob this job pulls is 2.5GB. On the 16GB GitHub-hosted
-          # runner that sum looked likely to OOM. Run 38430326157 checked it:
-          # this step, including the empty /api/generate that allocates the
-          # cache, finished in 9 seconds and the runner was not killed. Goose
-          # still made no tool call — headless came back with empty output
-          # inside its watch, and both interactive tests waited out their
-          # elicitation budget — and there was no exceed_context_size 400.
-          # The prompt fits and a 16GB machine held the cache. What did not
-          # finish is the CPU prefill of those ~66k tokens. This job runs on
-          # truenas-lab-large, a fresh machine per job with more CPU and memory
-          # than that 16GB host. The exact size is not recorded here. A
-          # quantized KV cache would not change the token count; if the
-          # prefill still does not finish inside the watch, the next move is
-          # the one src/server.spec.ts already names: delete the guidance
-          # copies from tool descriptions in mcp-base.
+          # KV cache is allocated for the whole window up front. f16 is ollama's
+          # default. qwen3:4b is 36 layers, 8 KV heads, head_dim 128, so a token
+          # is 2*36*8*128*2 = 147456 bytes. That is 6.04GB at 40960 — the
+          # "order of 6GB" the previous setting was costed at — and 11.2GB at
+          # 75776. q8_0 is half of that, about 5.6GB at this window. The weight
+          # blob this job pulls is 2.5GB, so llama-server with q8_0 is expected
+          # around 8GB. OLLAMA_FLASH_ATTENTION=1 is set with the cache type:
+          # quantized KV is only used when flash attention is on.
+          #
+          # On the 16GB GitHub-hosted runner, 11.2GB of f16 cache plus the
+          # weights looked likely to OOM. Run 38430326157 checked the allocate:
+          # this step, including the empty /api/generate, finished in 9 seconds
+          # and the runner was not killed. Goose still made no tool call —
+          # headless came back with empty output inside its watch, and both
+          # interactive tests waited out their elicitation budget — and there
+          # was no exceed_context_size 400. The prompt fits. What did not
+          # finish is the CPU prefill of those ~66k tokens.
+          #
+          # The lab runner is that same 16GB, with no swap and 8 vCPU. With
+          # the f16 cache, llama-server RSS was about 13.9GB, available memory
+          # about 1.3GB, and CPU pinned at 800%. q8_0 is the memory fix for
+          # that RSS: it leaves headroom on a 16GB machine with no swap. It
+          # does not speed goose up. The CPU is already saturated, and a
+          # smaller cache does not shrink the prefill. If the prefill still
+          # does not finish inside the watch, the next move is the one
+          # src/server.spec.ts already names: delete the guidance copies from
+          # tool descriptions in mcp-base.
+          #
+          # The VM received a shutdown signal around 29 minutes in and became
+          # unreachable at about 1770s of uptime. Just before that, about 15GB
+          # was available and llama-server, vitest, and goose had already
+          # exited. The shutdown is under investigation as a ~30-minute runner
+          # lifetime limit in the lab pool or its provider.
           #
           # A model's own Modelfile num_ctx would take precedence over this and
           # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
@@ -132,9 +144,11 @@ jobs:
           # repeat_penalty/stop/temperature/top_k/top_p, no num_ctx — so the
           # variable applies. The Hugging Face config's max_position_embeddings
           # is 40960, the window this is leaving; llama.cpp still honors a
-          # larger n_ctx. `ollama ps` below records the context that actually
-          # came up. Re-check the Modelfile before swapping GOOSE_MODEL.
-          OLLAMA_CONTEXT_LENGTH=75776 nohup ollama serve >/dev/null 2>&1 &
+          # larger n_ctx. `ollama ps` below records the context and the KV type
+          # that actually came up. Re-check the Modelfile before swapping
+          # GOOSE_MODEL.
+          OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_CONTEXT_LENGTH=75776 \
+            nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
           ollama list >/dev/null
           ollama pull qwen3:4b-instruct
