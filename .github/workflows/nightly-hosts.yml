@@ -123,14 +123,20 @@ jobs:
           # finish is the CPU prefill of those ~66k tokens.
           #
           # The lab runner is that same 16GB, with no swap and 8 vCPU. With
-          # the f16 cache, llama-server RSS was about 13.9GB and available
-          # memory about 1.3GB, CPU was pinned at 800%, and the VM received a
-          # shutdown signal around 29 minutes in. q8_0 is the memory fix. It
-          # does not speed goose up: the CPU is already saturated, and a
+          # the f16 cache, llama-server RSS was about 13.9GB, available memory
+          # about 1.3GB, and CPU pinned at 800%. q8_0 is the memory fix for
+          # that RSS: it leaves headroom on a 16GB machine with no swap. It
+          # does not speed goose up. The CPU is already saturated, and a
           # smaller cache does not shrink the prefill. If the prefill still
           # does not finish inside the watch, the next move is the one
           # src/server.spec.ts already names: delete the guidance copies from
           # tool descriptions in mcp-base.
+          #
+          # The VM received a shutdown signal around 29 minutes in and became
+          # unreachable at about 1770s of uptime. Just before that, about 15GB
+          # was available and llama-server, vitest, and goose had already
+          # exited. The shutdown is under investigation as a ~30-minute runner
+          # lifetime limit in the lab pool or its provider.
           #
           # A model's own Modelfile num_ctx would take precedence over this and
           # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
