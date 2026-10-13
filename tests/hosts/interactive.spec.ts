@@ -17,6 +17,7 @@ import {
   until,
   type FixturePaths,
 } from './harness';
+import { assessPlanRender, firstUnexpectedName } from './plan-render';
 
 /**
  * Tier 3, interactive: proves the human is actually
@@ -26,7 +27,9 @@ import {
  * through a real PTY into a real terminal emulator, and the assertion reads
  * the screen buffer a human would see — with the expected substring taken
  * from the elicitation frame in our own trace, never hard-coded against TUI
- * chrome.
+ * chrome. Claude Code collapses that body to `(+N more lines)`; the rule for
+ * that screen is assessPlanRender, and it still reads the substrings from
+ * the same frame.
  *
  * Probe history (2026-08-07, settled 2026-08-08): this suite's originally
  * inconclusive probe died before tools/call because hosts render first-run
@@ -151,24 +154,34 @@ async function driveToPlan(
   };
 }
 
-/** Deliberate semantics — do not "fix" this into a single-snapshot check:
- * each string must appear in the terminal text at some point before
- * approval, accumulated across polls. A fixed-size box that scrolls a long
- * plan still showed it to the human and passes; a host that truncates or
- * summarises the tail never renders the name at all and fails here. The
- * accumulated text is returned so callers can also assert absences. */
-async function accumulateUntilRendered(
-  screenText: () => string,
-  needles: string[],
-): Promise<string> {
+/** Deliberate semantics — do not "fix" this into a single-snapshot check.
+ * The screen text is accumulated across polls before approval. A fixed-size
+ * box that scrolls a long plan still showed it to the human and passes. A
+ * host that truncates or summarises the tail without saying so never renders
+ * the name and fails. Claude Code is the exception assessPlanRender names:
+ * `Tool: snapshots_create` plus `(+N more lines)` and the Accept/Decline
+ * choice means the body was rendered and collapsed, and the snapshot id and
+ * the targets are required in the elicitation message instead of on screen.
+ * The accumulated text is returned so callers can also assert absences. */
+async function accumulateUntilPlanShown(session: PlanSession): Promise<string> {
   let seen = '';
+  let assessment = assessPlanRender({
+    seen,
+    planMessage: session.planMessage,
+    snapshotId: session.snapshotId,
+    targets: session.targets,
+  });
   await until(() => {
-    seen += `\n${screenText()}`;
-    return needles.every((needle) => seen.includes(needle));
+    seen += `\n${session.screenText()}`;
+    assessment = assessPlanRender({
+      seen,
+      planMessage: session.planMessage,
+      snapshotId: session.snapshotId,
+      targets: session.targets,
+    });
+    return assessment.ok;
   }, 120_000);
-  for (const needle of needles) {
-    expect(seen, `never rendered: ${needle}`).toContain(needle);
-  }
+  expect(assessment.ok, assessment.reason).toBe(true);
   return seen;
 }
 
@@ -233,15 +246,13 @@ for (const adapter of adapters) {
       // assertion that the scenario under test occurred.
       expect(session.targets, session.planMessage).toEqual(FIXTURE_SYSTEMS);
 
-      const seen = await accumulateUntilRendered(session.screenText, [
-        session.snapshotId,
-        'snapshots_create',
-        ...session.targets,
-      ]);
+      const seen = await accumulateUntilPlanShown(session);
       // Shape control: named like a real system, registered nowhere, so the
       // checks above cannot pass on a substring accident. The stronger
       // control — registered but untargeted — is the narrowed scenario below.
-      expect(seen).not.toContain(ABSENT_SYSTEM);
+      // Checked against the elicitation as well as the screen: a name inside
+      // `(+N more lines)` never reaches the buffer.
+      expect(firstUnexpectedName(seen, session.planMessage, [ABSENT_SYSTEM])).toBeNull();
 
       await declineAndExpectNothingExecuted(session, declineKeys);
     });
@@ -264,18 +275,16 @@ for (const adapter of adapters) {
       // happened, or the absence assertions below are vacuous.
       expect(session.targets, session.planMessage).toEqual([NARROW_TARGET]);
 
-      const seen = await accumulateUntilRendered(session.screenText, [
-        session.snapshotId,
-        'snapshots_create',
-        ...session.targets,
-      ]);
+      const seen = await accumulateUntilPlanShown(session);
       // The control with teeth: connected, registered, absent from the plan.
       // Its name reaching the screen would mean the rendering (or these
       // checks) confuse the registry with the plan — the user would read an
-      // approval as covering a system it does not.
-      for (const name of FIXTURE_SYSTEMS.filter((n) => !session.targets.includes(n))) {
-        expect(seen).not.toContain(name);
-      }
+      // approval as covering a system it does not. The elicitation is checked
+      // too, because a collapsed body would hide the name from the screen
+      // while the plan still bound it.
+      const untargeted = FIXTURE_SYSTEMS.filter((name) => !session.targets.includes(name));
+      expect(untargeted, 'narrowed plan left no untargeted system to check').not.toEqual([]);
+      expect(firstUnexpectedName(seen, session.planMessage, untargeted)).toBeNull();
 
       await declineAndExpectNothingExecuted(session, declineKeys);
     });
