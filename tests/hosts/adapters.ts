@@ -102,12 +102,21 @@ export const claudeCode: HostAdapter = {
  * went 5/5 locally at seconds per test. */
 const GOOSE_MODEL = process.env['TNMCP_GOOSE_MODEL'] ?? 'qwen3:4b-instruct';
 
+/** Nightly sets this to `false`. Unset is not off: a local `test:hosts`
+ * with ollama up still runs goose. `0` is the same answer as `false`. */
+function gooseDisabled(): boolean {
+  const flag = process.env['TNMCP_GOOSE_ENABLED'];
+  return flag === 'false' || flag === '0';
+}
+
 export const goose: HostAdapter = {
   name: 'goose',
   command: 'goose',
   // Needs a running ollama server with the model pulled; `ollama list`
-  // fails when the server is down.
+  // fails when the server is down. The flag is checked first so a runner
+  // that already has goose still skips when the nightly turned it off.
   available: () => {
+    if (gooseDisabled()) return false;
     // Full model string, tag included: a base-name match would report an
     // overridden-but-unpulled tag as available and fail at runtime instead
     // of skipping.
