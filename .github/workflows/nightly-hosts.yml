@@ -17,6 +17,16 @@ on:
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
+    inputs:
+      goose_model:
+        description: >-
+          Ollama library tag for the goose host. Scheduled runs ignore this
+          and stay on qwen3:4b-instruct. The tag has to fit the 75776 context
+          this job sets: qwen3:1.7b's GGUF context is 40960, so the prompt
+          does not fit. llama3.2:1b's is 131072 and its template calls tools.
+        required: false
+        default: qwen3:4b-instruct
+        type: string
 
 permissions:
   contents: read
@@ -36,6 +46,9 @@ jobs:
     # sooner.
     timeout-minutes: 140
     env:
+      # Empty on a schedule, so the scheduled run stays on qwen3:4b-instruct.
+      # A dispatch that clears the input does the same.
+      GOOSE_MODEL: ${{ github.event.inputs.goose_model || 'qwen3:4b-instruct' }}
       # Gate only — step-level `if:` cannot reference secrets.* directly, and
       # hoisting the secret itself here would hand it to every step,
       # including the curl|bash installers. The real token goes only to the
@@ -82,7 +95,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          key: ollama-qwen3-4b-instruct
+          # Colon replaced so the default key stays ollama-qwen3-4b-instruct,
+          # the cache the scheduled runs already warm.
+          key: ollama-${{ replace(env.GOOSE_MODEL, ':', '-') }}
       - name: Start ollama and pull the model
         run: |
           # The installer starts a systemd service running as the `ollama`
@@ -142,16 +157,39 @@ jobs:
           # silently keep 4096 (ollama/ollama#10829, where mistral-small3.1
           # pins it). Checked against the registry: qwen3:4b-instruct sets only
           # repeat_penalty/stop/temperature/top_k/top_p, no num_ctx — so the
-          # variable applies. The Hugging Face config's max_position_embeddings
-          # is 40960, the window this is leaving; llama.cpp still honors a
-          # larger n_ctx. `ollama ps` below records the context and the KV type
-          # that actually came up. Re-check the Modelfile before swapping
-          # GOOSE_MODEL.
+          # variable applies. Qwen3-4B-Instruct-2507's max_position_embeddings
+          # is 262144, so 75776 is inside the trained window. `ollama ps`
+          # below records the context and the KV type that actually came up.
+          #
+          # GOOSE_MODEL is the dispatch input, defaulting to that same tag.
+          # Re-checked before offering a smaller one (registry manifests and
+          # the GGUF headers, not the library badge):
+          #   qwen3:1.7b — params are the same five, no num_ctx, and the
+          #     template does call tools. GGUF context_length is 40960, rope
+          #     scaling is absent, rope freq base is 1e6. The ~67k prompt does
+          #     not fit; a larger n_ctx would be past the positions the weights
+          #     were trained on. It is also the thinking model, which is the
+          #     variant this job already left.
+          #   llama3.2:1b — the instruct q8_0 (digest baf6a787fdff). No params
+          #     layer, so no num_ctx. GGUF context_length is 131072, which
+          #     holds 75776. The template tells the model it has tool calling
+          #     capabilities and renders a function-call JSON. 16 layers, 8 KV
+          #     heads, head_dim 64: q8_0 KV at this window is about 1.2GB plus
+          #     the 1.3GB weights, under the 4b figure above.
+          # The 4b layer arithmetic above is the default model. A dispatch
+          # does not change the window: the prompt is the same size.
+          case "$GOOSE_MODEL" in
+            ''|*[!A-Za-z0-9:._-]*)
+              echo "goose model must be an ollama tag" >&2
+              exit 1
+              ;;
+          esac
+          echo "goose model: $GOOSE_MODEL"
           OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_CONTEXT_LENGTH=75776 \
             nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
           ollama list >/dev/null
-          ollama pull qwen3:4b-instruct
+          ollama pull "$GOOSE_MODEL"
           # Load the model and record the context it came up with, so the log
           # says what was actually in force rather than what we asked for. Not
           # an assertion: the suite already reports an undersized window
@@ -161,8 +199,9 @@ jobs:
           # it generates nothing. `ollama run` is deliberately avoided here:
           # with an empty argument it can drop into its interactive REPL and
           # hang the job waiting on a stdin that never arrives.
+          # The case above has already rejected a quote, so this JSON is the tag.
           curl -sS http://localhost:11434/api/generate \
-            -d '{"model":"qwen3:4b-instruct","prompt":"","keep_alive":"10m"}' \
+            -d "{\"model\":\"$GOOSE_MODEL\",\"prompt\":\"\",\"keep_alive\":\"10m\"}" \
             >/dev/null || true
           ollama ps || true
       - name: Install goose
@@ -183,6 +222,9 @@ jobs:
           echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
       - name: Run host suite
         env:
+          # adapters.ts reads this; unset, the suite stays on qwen3:4b-instruct
+          # even when the pull step fetched something else.
+          TNMCP_GOOSE_MODEL: ${{ env.GOOSE_MODEL }}
           # The real credentials reach this step and no other — the gate above
           # is a boolean precisely so the curl|bash installer steps never see
           # them. Same three, same precedence.
@@ -206,6 +248,6 @@ jobs:
           # the log rather than only in vitest's quiet down-arrow lines. A
           # skipped adapter reads as a pass in the summary, which is how
           # claude-code stayed dark across every green run before this.
-          echo "goose: enabled"
+          echo "goose: enabled ($TNMCP_GOOSE_MODEL)"
           echo "claude-code: ${HAS_CLAUDE_AUTH}"
           yarn test:hosts
