@@ -17,7 +17,12 @@ import {
   until,
   type FixturePaths,
 } from './harness';
-import { assessPlanRender, firstUnexpectedName } from './plan-render';
+import {
+  assessPlanRender,
+  firstUnexpectedName,
+  snapshotCallFromTrace,
+  type SnapshotCall,
+} from './plan-render';
 
 /**
  * Tier 3, interactive: proves the human is actually
@@ -27,9 +32,9 @@ import { assessPlanRender, firstUnexpectedName } from './plan-render';
  * through a real PTY into a real terminal emulator, and the assertion reads
  * the screen buffer a human would see — with the expected substring taken
  * from the elicitation frame in our own trace, never hard-coded against TUI
- * chrome. Claude Code collapses that body to `(+N more lines)`; the rule for
- * that screen is assessPlanRender, and it still reads the substrings from
- * the same frame.
+ * chrome. Claude Code collapses that body to `(+N more lines)`. The rule for
+ * that one frame is assessPlanRender: the snapshot id has to match the
+ * tools/call arguments, and each target has to appear on an API-calls line.
  *
  * Probe history (2026-08-07, settled 2026-08-08): this suite's originally
  * inconclusive probe died before tools/call because hosts render first-run
@@ -68,6 +73,8 @@ interface PlanSession {
    * regardless of what the model was asked to do. */
   targets: string[];
   snapshotId: string;
+  /** snapshots_create arguments from the tools/call that produced the plan. */
+  call: SnapshotCall;
 }
 
 async function driveToPlan(
@@ -142,6 +149,11 @@ async function driveToPlan(
   const snapshotId = /"([^"]+@[^"]+)"/.exec(planMessage)?.[1];
   expect(snapshotId).toMatch(/^tank\/data@/);
   const targets = /^Target systems: (.+)$/m.exec(planMessage)?.[1]?.split(', ') ?? [];
+  const call = snapshotCallFromTrace(readTrace(tracePath));
+  expect(call, 'trace has no snapshots_create tools/call before the elicitation').toBeDefined();
+  if (call === undefined) {
+    throw new Error('trace has no snapshots_create tools/call before the elicitation');
+  }
 
   return {
     pty,
@@ -151,6 +163,7 @@ async function driveToPlan(
     planMessage,
     targets,
     snapshotId: snapshotId as string,
+    call,
   };
 }
 
@@ -158,27 +171,28 @@ async function driveToPlan(
  * The screen text is accumulated across polls before approval. A fixed-size
  * box that scrolls a long plan still showed it to the human and passes. A
  * host that truncates or summarises the tail without saying so never renders
- * the name and fails. Claude Code is the exception assessPlanRender names:
- * `Tool: snapshots_create` plus `(+N more lines)` and the Accept/Decline
- * choice means the body was rendered and collapsed, and the snapshot id and
- * the targets are required in the elicitation message instead of on screen.
- * The accumulated text is returned so callers can also assert absences. */
+ * the name and fails. Claude Code is the exception assessPlanRender names,
+ * and only for the current frame: `Tool: snapshots_create`, `(+N more lines)`
+ * and the Accept/Decline choice have to be on that frame together. The
+ * snapshot id then has to match the tools/call arguments, and each target
+ * has to appear as `- [name]` under `API calls to be made:`. The accumulated
+ * text is returned so callers can also assert absences. */
 async function accumulateUntilPlanShown(session: PlanSession): Promise<string> {
   let seen = '';
-  let assessment = assessPlanRender({
-    seen,
-    planMessage: session.planMessage,
-    snapshotId: session.snapshotId,
-    targets: session.targets,
-  });
-  await until(() => {
-    seen += `\n${session.screenText()}`;
-    assessment = assessPlanRender({
+  const assess = (screen: string): { ok: boolean; reason: string } =>
+    assessPlanRender({
       seen,
+      screen,
       planMessage: session.planMessage,
       snapshotId: session.snapshotId,
       targets: session.targets,
+      call: session.call,
     });
+  let assessment = assess('');
+  await until(() => {
+    const screen = session.screenText();
+    seen += `\n${screen}`;
+    assessment = assess(screen);
     return assessment.ok;
   }, 120_000);
   expect(assessment.ok, assessment.reason).toBe(true);

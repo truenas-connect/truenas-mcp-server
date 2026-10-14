@@ -774,13 +774,25 @@ length the current fixture never produces.
   so the assertion is not "fixed" into a single-snapshot check later.
   Claude Code 2.1.296 (nightly run 38461826132) is a narrower exception:
   it paints `Tool: snapshots_create` and collapses the rest of the body to
-  `(+N more lines)`, so the snapshot id never reaches the buffer. The
-  assertion then requires that trailer together with the Accept/Decline
-  choice, and requires the hidden strings in the elicitation message from
-  the trace. A screen with no trailer still fails `never rendered`. The
-  decline path is unchanged. An untargeted name is checked against the
-  screen and the elicitation, because a collapsed body would otherwise hide
-  it from a screen-only absence check (`tests/hosts/plan-render.ts`).
+  `(+N more lines)`, so the snapshot id never reaches the buffer. That
+  exception is one screen frame showing `Tool: snapshots_create`, the
+  `(+N more lines)` trailer, and Accept and Decline together. Markers
+  collected across earlier polls do not count. The hidden strings are not
+  re-checked as substrings of the elicitation: the snapshot id and the
+  targets are parsed out of that message, so asking the message whether it
+  contains them cannot fail. The snapshot id must instead equal
+  `${dataset}@${name}` from the `snapshots_create` arguments on the
+  `tools/call` frame that preceded the elicitation. When that call's
+  `systems` argument is a registry name or a list of names, it must be the
+  same set as the targets; `"all"`, and an omitted `systems`, do not name
+  them and are not compared.
+  Each target must also appear as `- [name]` in the message's
+  `API calls to be made:` section. A name that appears only on the
+  `Target systems:` line does not count. A frame with no trailer still
+  fails `never rendered`. The decline path is unchanged. An untargeted
+  name is checked against the accumulated screen and the elicitation,
+  because a collapsed body would otherwise hide it from a screen-only
+  absence check (`tests/hosts/plan-render.ts`).
 - `tests/hosts/headless.spec.ts` — unchanged in intent; `elicitationAccepts`
   is already per-elicitation (`harness.ts:142`), so the never-accepts
   invariant generalises without edit. Confirm it, do not rewrite it.
@@ -798,8 +810,10 @@ length the current fixture never produces.
   `nas-a`/`nas-b`), and no real name may be a prefix of another, or the
   positive checks inherit the same substring problem in reverse. A host that
   collapses the plan body (see the Claude Code note above) may keep a
-  targeted name off the screen; the elicitation must still contain it, and
-  an untargeted name must still be absent from both.
+  targeted name off the screen. The snapshot id then has to match the
+  tools/call arguments, and each target has to appear on an API-calls line.
+  An untargeted name must still be absent from the accumulated screen and
+  from the elicitation.
 - N=1 stays a *tested* configuration, not a promise. Tier 2 keeps at least
   one test running against a one-system config in CI — the suite writes its
   own config per test, so this costs nothing. At tier 3 a second nightly run
