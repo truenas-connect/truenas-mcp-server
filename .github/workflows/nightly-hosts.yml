@@ -20,10 +20,11 @@ on:
     inputs:
       goose_model:
         description: >-
-          Ollama library tag for the goose host. Scheduled runs ignore this
-          and stay on qwen3:4b-instruct. The tag has to fit the 75776 context
-          this job sets: qwen3:1.7b's GGUF context is 40960, so the prompt
-          does not fit. llama3.2:1b's is 131072 and its template calls tools.
+          Ollama tag for the goose host, including a namespaced tag
+          (user/model:tag). Scheduled runs ignore this and stay on
+          qwen3:4b-instruct. The tag has to fit the 75776 context this job
+          sets: qwen3:1.7b's GGUF context is 40960, so the prompt does not
+          fit. llama3.2:1b's is 131072 and its template calls tools.
         required: false
         default: qwen3:4b-instruct
         type: string
@@ -91,13 +92,29 @@ jobs:
       - run: yarn build
       - name: Install ollama
         run: curl -fsSL https://ollama.com/install.sh | sh
+      - name: Cache key
+        id: model-key
+        run: |
+          # Validated before anything is written, so a tag that fails this
+          # never reaches $GITHUB_OUTPUT. The expression language has no
+          # replace(), and GitHub rejects the workflow file if one is used,
+          # which would take the scheduled run down with the dispatch.
+          # : and / both become -, so the default qwen3:4b-instruct keeps the
+          # key ollama-qwen3-4b-instruct and a namespaced tag still produces a
+          # key the cache accepts. / is allowed in the tag: it is not a quote.
+          case "$GOOSE_MODEL" in
+            ''|*[!A-Za-z0-9:._/-]*)
+              echo "goose model must be an ollama tag" >&2
+              exit 1
+              ;;
+          esac
+          echo "goose model: $GOOSE_MODEL"
+          echo "key=ollama-${GOOSE_MODEL//[:\/]/-}" >> "$GITHUB_OUTPUT"
       - name: Cache the model
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
-          # Colon replaced so the default key stays ollama-qwen3-4b-instruct,
-          # the cache the scheduled runs already warm.
-          key: ollama-${{ replace(env.GOOSE_MODEL, ':', '-') }}
+          key: ${{ steps.model-key.outputs.key }}
       - name: Start ollama and pull the model
         run: |
           # The installer starts a systemd service running as the `ollama`
@@ -178,13 +195,8 @@ jobs:
           #     the 1.3GB weights, under the 4b figure above.
           # The 4b layer arithmetic above is the default model. A dispatch
           # does not change the window: the prompt is the same size.
-          case "$GOOSE_MODEL" in
-            ''|*[!A-Za-z0-9:._-]*)
-              echo "goose model must be an ollama tag" >&2
-              exit 1
-              ;;
-          esac
-          echo "goose model: $GOOSE_MODEL"
+          # The tag was checked in the cache-key step, which is what keeps a
+          # quote out of the JSON below.
           OLLAMA_FLASH_ATTENTION=1 OLLAMA_KV_CACHE_TYPE=q8_0 OLLAMA_CONTEXT_LENGTH=75776 \
             nohup ollama serve >/dev/null 2>&1 &
           for _ in $(seq 1 30); do ollama list >/dev/null 2>&1 && break; sleep 1; done
@@ -199,7 +211,8 @@ jobs:
           # it generates nothing. `ollama run` is deliberately avoided here:
           # with an empty argument it can drop into its interactive REPL and
           # hang the job waiting on a stdin that never arrives.
-          # The case above has already rejected a quote, so this JSON is the tag.
+          # The cache-key step rejected anything outside the tag allowlist,
+          # which includes a quote, so this JSON is the tag.
           curl -sS http://localhost:11434/api/generate \
             -d "{\"model\":\"$GOOSE_MODEL\",\"prompt\":\"\",\"keep_alive\":\"10m\"}" \
             >/dev/null || true
