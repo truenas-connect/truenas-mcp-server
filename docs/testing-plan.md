@@ -687,7 +687,8 @@ installed, is the only LLM-driven option with no per-run cost.
 **Scheduled: `.github/workflows/nightly-hosts.yml`** (decision 2026-08-10:
 Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
 goose on `ubuntu-latest`, pulls `qwen3:4b-instruct` (cached between runs), builds, and
-runs `test:hosts`. The claude-code adapter is included when either of the
+runs `test:hosts`. A `workflow_dispatch` input `goose_model` can pull another tag;
+the schedule ignores it. The claude-code adapter is included when either of the
 workflow's dedicated credential secrets is configured — named for this
 workflow rather than reusing the review workflow's `CLAUDE_API_KEY`, so each
 can be rotated or revoked independently: `TEST_HOSTS_CLAUDE_API_KEY` (an
