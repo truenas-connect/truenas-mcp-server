@@ -685,29 +685,32 @@ for reasons unrelated to the code. The Ollama-backed path, once a host is
 installed, is the only LLM-driven option with no per-run cost.
 
 **Scheduled: `.github/workflows/nightly-hosts.yml`** (decision 2026-08-10:
-Ollama-backed, no model-API spend in CI). The nightly job installs ollama and
-goose on `ubuntu-latest`, pulls `qwen3:4b-instruct` (cached between runs), builds, and
-runs `test:hosts`. A `workflow_dispatch` input `goose_model` can pull another tag;
-the schedule ignores it. The claude-code adapter is included when either of the
-workflow's dedicated credential secrets is configured — named for this
+Ollama-backed, no model-API spend in CI). The nightly job builds and runs
+`test:hosts`. Goose is off unless a `workflow_dispatch` sets `goose_enabled`:
+llama3.2:1b on CPU (run 38602359949) never makes the tool call in time with
+the ~67k-token catalog prompt, so the Ollama install and pull are skipped
+with it. `goose_model` still selects the tag when goose is turned back on;
+the schedule leaves that input alone. The claude-code adapter is included when
+either of the workflow's dedicated credential secrets is configured — named for this
 workflow rather than reusing the review workflow's `CLAUDE_API_KEY`, so each
 can be rotated or revoked independently: `TEST_HOSTS_CLAUDE_API_KEY` (an
 Anthropic API key, passed to the CLI as `ANTHROPIC_API_KEY`; per-token
 billing) or `TEST_HOSTS_CLAUDE_OAUTH_TOKEN` (minted with `claude setup-token`;
 bills a claude.ai subscription). The job exports exactly one — the API key
 wins when both exist — so the CLI never sees an ambiguous auth environment.
-Without either secret the install step is skipped and the claude rows skip,
-degrading the job to Ollama-only rather than failing. The adapter pins the
+Without either secret the install step is skipped and the claude rows skip.
+The job does not fail for a host that was not asked to run. The adapter pins the
 cheapest current model (`claude-haiku-4-5`, $1/$5 per MTok vs the default
 tier's $10/$50; override via `TNMCP_CLAUDE_MODEL`) — the assertions are
 trace-based and model-agnostic, and the session is two explicitly-prompted
 tool calls, so per-run spend is a few cents rather than the ~$0.30 measured
 on the default model.
 
-The nightly covers **both halves** of the phase: goose has an interactive
-adapter too (its TUI renders the elicitation with the plan verbatim, probed
-2026-08-10), so the human-is-shown-the-plan assertion runs continuously, not
-only where a developer has `claude`. The invariant is asserted
+Goose's interactive adapter is still in the suite (its TUI renders the
+elicitation with the plan verbatim, probed 2026-08-10) and runs when
+`goose_enabled` is set or a developer runs the suite locally. On the schedule
+the human-is-shown-the-plan assertion runs for claude-code, when a credential
+is configured. The invariant is asserted
 shape-agnostically per elicitation — whatever the response (a decline/cancel
 action, a JSON-RPC error, or nothing), it must not be an accept.
 

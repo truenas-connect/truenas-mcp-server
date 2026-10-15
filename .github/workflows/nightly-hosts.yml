@@ -4,11 +4,14 @@ name: Nightly hosts (tier 3)
 # Nightly and non-blocking by design — a model-driven step can fail for
 # reasons unrelated to the code.
 #
-# Two hosts: goose backed by a local Ollama model (no API spend), and
-# claude-code when one of its dedicated credential secrets is configured
-# (pinned to haiku — a few cents of model spend per run). Without a secret,
-# the claude install step is skipped, the binary stays absent, and the claude
-# rows skip — the job degrades to Ollama-only rather than failing.
+# Two hosts: claude-code when one of its dedicated credential secrets is
+# configured (pinned to haiku — a few cents of model spend per run), and
+# goose backed by a local Ollama model. Goose is off unless a dispatch sets
+# goose_enabled: llama3.2:1b on CPU (run 38602359949) never makes the tool
+# call in time with the ~67k-token catalog prompt. The Ollama install and
+# pull are skipped with it. Without a claude secret the claude install is
+# skipped and those rows skip. The job does not fail for a host that was
+# not asked to run.
 #
 # The job runs on truenas-lab-large, a fresh machine per job: 16GB, no swap,
 # 8 vCPU. The image is not assumed to ship Node.
@@ -18,13 +21,23 @@ on:
     - cron: '17 6 * * *'
   workflow_dispatch:
     inputs:
+      goose_enabled:
+        description: >-
+          Run the goose/Ollama half. Off by default, including the schedule.
+          llama3.2:1b on CPU (run 38602359949) never makes the tool call in
+          time with the ~67k-token catalog prompt. Turn this on to try again;
+          goose_model still selects the tag.
+        required: false
+        default: false
+        type: boolean
       goose_model:
         description: >-
           Ollama tag for the goose host, including a namespaced tag
-          (user/model:tag). Scheduled runs ignore this and stay on
-          qwen3:4b-instruct. The tag has to fit the 75776 context this job
-          sets: qwen3:1.7b's GGUF context is 40960, so the prompt does not
-          fit. llama3.2:1b's is 131072 and its template calls tools.
+          (user/model:tag). Used only when goose_enabled is on. Scheduled
+          runs ignore this and stay on qwen3:4b-instruct. The tag has to fit
+          the 75776 context this job sets: qwen3:1.7b's GGUF context is
+          40960, so the prompt does not fit. llama3.2:1b's is 131072 and its
+          template calls tools.
         required: false
         default: qwen3:4b-instruct
         type: string
@@ -47,8 +60,14 @@ jobs:
     # sooner.
     timeout-minutes: 140
     env:
-      # Empty on a schedule, so the scheduled run stays on qwen3:4b-instruct.
-      # A dispatch that clears the input does the same.
+      # A boolean input arrives as the string true or false. Absent on a
+      # schedule, so the scheduled run stays off. adapters.ts treats false
+      # as a skip and leaves an unset flag alone, so a local test:hosts
+      # still runs goose when ollama is up.
+      TNMCP_GOOSE_ENABLED: ${{ github.event.inputs.goose_enabled == 'true' && 'true' || 'false' }}
+      # Empty on a schedule, so an enabled goose stays on qwen3:4b-instruct.
+      # A dispatch that clears the input does the same. Ignored while goose
+      # is off; the pull steps do not run.
       GOOSE_MODEL: ${{ github.event.inputs.goose_model || 'qwen3:4b-instruct' }}
       # Gate only — step-level `if:` cannot reference secrets.* directly, and
       # hoisting the secret itself here would hand it to every step,
@@ -91,8 +110,10 @@ jobs:
       # The suite drives the tier-2 fixture from dist/.
       - run: yarn build
       - name: Install ollama
+        if: env.TNMCP_GOOSE_ENABLED == 'true'
         run: curl -fsSL https://ollama.com/install.sh | sh
       - name: Cache key
+        if: env.TNMCP_GOOSE_ENABLED == 'true'
         id: model-key
         run: |
           # Validated before anything is written, so a tag that fails this
@@ -111,11 +132,13 @@ jobs:
           echo "goose model: $GOOSE_MODEL"
           echo "key=ollama-${GOOSE_MODEL//[:\/]/-}" >> "$GITHUB_OUTPUT"
       - name: Cache the model
+        if: env.TNMCP_GOOSE_ENABLED == 'true'
         uses: actions/cache@v4
         with:
           path: ~/.ollama/models
           key: ${{ steps.model-key.outputs.key }}
       - name: Start ollama and pull the model
+        if: env.TNMCP_GOOSE_ENABLED == 'true'
         run: |
           # The installer starts a systemd service running as the `ollama`
           # system user, whose model dir (/usr/share/ollama/.ollama) the cache
@@ -218,6 +241,7 @@ jobs:
             >/dev/null || true
           ollama ps || true
       - name: Install goose
+        if: env.TNMCP_GOOSE_ENABLED == 'true'
         run: |
           curl -fsSL https://github.com/block/goose/releases/download/stable/download_cli.sh \
             | CONFIGURE=false bash
@@ -225,7 +249,9 @@ jobs:
       - name: Install claude-code
         if: env.HAS_CLAUDE_AUTH == 'true'
         run: |
-          # ~/.local/bin is already on GITHUB_PATH from the goose step.
+          # goose's install puts this on PATH, and that step is skipped while
+          # goose is disabled. claude's installer writes here too.
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           curl -fsSL https://claude.ai/install.sh | bash
           # Skip the first-run onboarding wizard (theme picker), which would
           # otherwise precede the input box. Per-folder trust cannot be seeded
@@ -235,8 +261,10 @@ jobs:
           echo '{"hasCompletedOnboarding": true}' > "$HOME/.claude.json"
       - name: Run host suite
         env:
-          # adapters.ts reads this; unset, the suite stays on qwen3:4b-instruct
-          # even when the pull step fetched something else.
+          # adapters.ts reads both. The flag is what makes the rows skip even
+          # if the runner image already has goose. Unset, the model stays
+          # qwen3:4b-instruct even when the pull step fetched something else.
+          TNMCP_GOOSE_ENABLED: ${{ env.TNMCP_GOOSE_ENABLED }}
           TNMCP_GOOSE_MODEL: ${{ env.GOOSE_MODEL }}
           # The real credentials reach this step and no other — the gate above
           # is a boolean precisely so the curl|bash installer steps never see
@@ -261,6 +289,12 @@ jobs:
           # the log rather than only in vitest's quiet down-arrow lines. A
           # skipped adapter reads as a pass in the summary, which is how
           # claude-code stayed dark across every green run before this.
-          echo "goose: enabled ($TNMCP_GOOSE_MODEL)"
+          # Goose stays in the suite; goose_enabled turns the install and
+          # the rows back on.
+          if [ "$TNMCP_GOOSE_ENABLED" = "true" ]; then
+            echo "goose: enabled ($TNMCP_GOOSE_MODEL)"
+          else
+            echo "goose: disabled — llama3.2:1b on CPU (run 38602359949) never makes the tool call in time with the ~67k-token catalog prompt. Dispatch with goose_enabled to turn it back on; goose_model still selects the tag."
+          fi
           echo "claude-code: ${HAS_CLAUDE_AUTH}"
           yarn test:hosts
